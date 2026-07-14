@@ -12,7 +12,11 @@ from mailbox_manager.domain.models import (
     FetchResult,
     ProtocolType,
 )
-from mailbox_manager.gui.workers import FetchWorker
+from mailbox_manager.gui.workers import (
+    FetchWorker,
+    UpdateCheckWorker,
+    UpdateDownloadWorker,
+)
 
 
 class FakeService:
@@ -58,3 +62,66 @@ def test_fetch_worker_honors_stop_before_network_call(qtbot) -> None:
 
     assert statuses == [AccountStatus.CANCELLED]
 
+
+class FakeUpdateService:
+    def __init__(self) -> None:
+        self.update = object()
+        self.downloaded = object()
+        self.staged = object()
+
+    def check_for_update(self):
+        return self.update
+
+    def download_update(self, update, *, progress, cancelled):
+        assert update is self.update
+        assert cancelled() is False
+        progress(25, 100)
+        progress(100, 100)
+        return self.downloaded
+
+    def stage_update(self, downloaded, *, cancelled):
+        assert downloaded is self.downloaded
+        assert cancelled() is False
+        return self.staged
+
+
+def test_update_check_worker_returns_available_update(qtbot) -> None:
+    service = FakeUpdateService()
+    worker = UpdateCheckWorker(service)  # type: ignore[arg-type]
+    results: list[tuple[object, object]] = []
+    worker.signals.result.connect(lambda update, error: results.append((update, error)))
+
+    with qtbot.waitSignal(worker.signals.finished, timeout=1000):
+        worker.run()
+
+    assert results == [(service.update, None)]
+
+
+def test_update_download_worker_reports_progress_and_stages(qtbot) -> None:
+    service = FakeUpdateService()
+    worker = UpdateDownloadWorker(  # type: ignore[arg-type]
+        service,
+        service.update,
+        "operation-1",
+    )
+    progress: list[tuple[int, int | None]] = []
+    statuses: list[str] = []
+    results: list[tuple[object, object]] = []
+    worker.signals.progress.connect(
+        lambda operation, received, total: progress.append((received, total))
+    )
+    worker.signals.status.connect(lambda operation, status: statuses.append(status))
+    worker.signals.result.connect(
+        lambda operation, staged, error: results.append((staged, error))
+    )
+
+    with qtbot.waitSignal(
+        worker.signals.finished,
+        timeout=1000,
+        check_params_cb=lambda operation: operation == "operation-1",
+    ):
+        worker.run()
+
+    assert progress == [(25, 100), (100, 100)]
+    assert statuses == ["正在下载并校验更新包…", "下载完成，正在安全解压…"]
+    assert results == [(service.staged, None)]

@@ -15,6 +15,7 @@ from mailbox_manager.services.security_audit import GraphSecurityAuditService
 from mailbox_manager.services.security_authorization import GraphDeviceAuthorizationService
 from mailbox_manager.services.send_service import OutgoingDraft, SendService
 from mailbox_manager.services.translation_service import TranslationService
+from mailbox_manager.services.update_service import StagedUpdate, UpdateInfo, UpdateService
 
 
 class FetchWorkerSignals(QObject):
@@ -268,3 +269,76 @@ class SendBatchWorker(QRunnable):
             self.signals.result.emit(None, exc)
         finally:
             self.signals.finished.emit()
+
+
+class UpdateCheckSignals(QObject):
+    result = Signal(object, object)
+    finished = Signal()
+
+
+class UpdateCheckWorker(QRunnable):
+    """Check GitHub releases without blocking the Qt event loop."""
+
+    def __init__(self, service: UpdateService) -> None:
+        super().__init__()
+        self.service = service
+        self.signals = UpdateCheckSignals()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            update: UpdateInfo | None = self.service.check_for_update()
+            self.signals.result.emit(update, None)
+        except Exception as exc:
+            self.signals.result.emit(None, exc)
+        finally:
+            self.signals.finished.emit()
+
+
+class UpdateDownloadSignals(QObject):
+    progress = Signal(str, int, object)
+    status = Signal(str, str)
+    result = Signal(str, object, object)
+    finished = Signal(str)
+
+
+class UpdateDownloadWorker(QRunnable):
+    """Download, verify and safely stage an update in the background."""
+
+    def __init__(
+        self,
+        service: UpdateService,
+        update: UpdateInfo,
+        operation_id: str = "",
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.update = update
+        self.operation_id = operation_id
+        self.signals = UpdateDownloadSignals()
+        self._cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self.signals.status.emit(self.operation_id, "正在下载并校验更新包…")
+            downloaded = self.service.download_update(
+                self.update,
+                progress=lambda received, total: self.signals.progress.emit(
+                    self.operation_id, received, total
+                ),
+                cancelled=self._cancelled.is_set,
+            )
+            self.signals.status.emit(self.operation_id, "下载完成，正在安全解压…")
+            staged: StagedUpdate = self.service.stage_update(
+                downloaded,
+                cancelled=self._cancelled.is_set,
+            )
+            self.signals.result.emit(self.operation_id, staged, None)
+        except Exception as exc:
+            self.signals.result.emit(self.operation_id, None, exc)
+        finally:
+            self.signals.finished.emit(self.operation_id)

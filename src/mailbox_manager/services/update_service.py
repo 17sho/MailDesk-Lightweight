@@ -1,0 +1,1803 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import os
+import re
+import shutil
+import stat
+import struct
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import zipfile
+from collections.abc import Callable, Mapping
+from contextlib import suppress
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path, PurePosixPath
+from typing import Any, BinaryIO
+from urllib.parse import urljoin, urlsplit
+from uuid import uuid4
+
+import httpx
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+DEFAULT_REPOSITORY = "17sho/MailDesk"
+GITHUB_API_ROOT = "https://api.github.com"
+CHECKSUM_ASSET_NAME = "SHA256SUMS.txt"
+SIGNED_MANIFEST_ASSET_NAME = "MailDesk-update-manifest-v1.json"
+SIGNED_MANIFEST_SIGNATURE_NAME = "MailDesk-update-manifest-v1.sig"
+TRUSTED_UPDATE_PUBLIC_KEY_B64 = "ZGx6G4ac2jh9UG+/NIEKLKKYTM8MdNt52IfHuNoiRts="
+TRUSTED_GITHUB_DOWNLOAD_HOSTS = frozenset(
+    {
+        "api.github.com",
+        "github.com",
+        "github-releases.githubusercontent.com",
+        "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com",
+    }
+)
+_REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
+_SEMVER_PATTERN = re.compile(
+    r"^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+)
+_SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+_CHECKSUM_LINE_PATTERN = re.compile(
+    r"^([0-9a-fA-F]{64})[ \t]+(?:\*| )?([^\r\n]+?)\s*$"
+)
+_REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {
+        "aux",
+        "clock$",
+        "con",
+        "conin$",
+        "conout$",
+        "nul",
+        "prn",
+        *(f"com{number}" for number in range(1, 10)),
+        *(f"lpt{number}" for number in range(1, 10)),
+    }
+)
+
+
+class UpdateError(RuntimeError):
+    """A user-displayable update failure."""
+
+
+class UpdateNetworkError(UpdateError):
+    """The update endpoint could not be reached or returned an invalid status."""
+
+
+class UpdateSecurityError(UpdateError):
+    """Downloaded update data failed a trust or integrity check."""
+
+
+class UpdateCancelledError(UpdateError):
+    """The caller cancelled a background update download."""
+
+
+class InstallMode(StrEnum):
+    SOURCE = "source"
+    ONEFILE = "onefile"
+    ONEDIR = "onedir"
+
+
+@dataclass(frozen=True, slots=True)
+class _SemanticVersion:
+    major: int
+    minor: int
+    patch: int
+    prerelease: tuple[int | str, ...] = ()
+    build: str | None = None
+
+    @classmethod
+    def parse(cls, value: str) -> _SemanticVersion:
+        match = _SEMVER_PATTERN.fullmatch(value.strip())
+        if match is None:
+            raise ValueError(f"无效的语义版本号：{value}")
+        prerelease: list[int | str] = []
+        for identifier in (match.group(4) or "").split("."):
+            if not identifier:
+                continue
+            if identifier.isdigit():
+                if len(identifier) > 1 and identifier.startswith("0"):
+                    raise ValueError(f"无效的语义版本号：{value}")
+                prerelease.append(int(identifier))
+            else:
+                prerelease.append(identifier)
+        return cls(
+            major=int(match.group(1)),
+            minor=int(match.group(2)),
+            patch=int(match.group(3)),
+            prerelease=tuple(prerelease),
+            build=match.group(5),
+        )
+
+    @property
+    def normalized(self) -> str:
+        value = f"{self.major}.{self.minor}.{self.patch}"
+        if self.prerelease:
+            value += "-" + ".".join(str(item) for item in self.prerelease)
+        if self.build:
+            value += f"+{self.build}"
+        return value
+
+    def precedence_key(self) -> tuple[int, int, int]:
+        return self.major, self.minor, self.patch
+
+
+def compare_versions(left: str, right: str) -> int:
+    """Compare SemVer precedence, ignoring build metadata as required by SemVer."""
+
+    left_version = _SemanticVersion.parse(left)
+    right_version = _SemanticVersion.parse(right)
+    if left_version.precedence_key() != right_version.precedence_key():
+        return -1 if left_version.precedence_key() < right_version.precedence_key() else 1
+    left_pre = left_version.prerelease
+    right_pre = right_version.prerelease
+    if not left_pre and not right_pre:
+        return 0
+    if not left_pre:
+        return 1
+    if not right_pre:
+        return -1
+    for left_item, right_item in zip(left_pre, right_pre, strict=False):
+        if left_item == right_item:
+            continue
+        if isinstance(left_item, int) and isinstance(right_item, str):
+            return -1
+        if isinstance(left_item, str) and isinstance(right_item, int):
+            return 1
+        return -1 if left_item < right_item else 1
+    if len(left_pre) == len(right_pre):
+        return 0
+    return -1 if len(left_pre) < len(right_pre) else 1
+
+
+def is_newer_version(candidate: str, current: str) -> bool:
+    return compare_versions(candidate, current) > 0
+
+
+def detect_install_mode(
+    *,
+    frozen: bool | None = None,
+    meipass: str | os.PathLike[str] | None = None,
+) -> InstallMode:
+    """Detect a PyInstaller onefile/onedir process without importing PyInstaller."""
+
+    is_frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
+    if not is_frozen:
+        return InstallMode.SOURCE
+    bundle_root = getattr(sys, "_MEIPASS", "") if meipass is None else meipass
+    if bundle_root and Path(bundle_root).name.casefold() == "_internal":
+        return InstallMode.ONEDIR
+    return InstallMode.ONEFILE
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseAsset:
+    name: str
+    download_url: str
+    size: int
+    digest: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseInfo:
+    version: str
+    tag_name: str
+    name: str
+    notes: str
+    page_url: str
+    published_at: str | None
+    assets: tuple[ReleaseAsset, ...]
+
+    def asset_named(self, name: str) -> ReleaseAsset | None:
+        return next((asset for asset in self.assets if asset.name == name), None)
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateInfo:
+    current_version: str
+    release: ReleaseInfo
+    install_mode: InstallMode
+    asset: ReleaseAsset | None
+    checksum_asset: ReleaseAsset | None
+    manifest_asset: ReleaseAsset | None = None
+    signature_asset: ReleaseAsset | None = None
+    expected_sha256: str | None = None
+    expected_size: int | None = None
+
+    @property
+    def install_supported(self) -> bool:
+        return self.install_mode is not InstallMode.SOURCE and self.asset is not None
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadedUpdate:
+    update: UpdateInfo
+    archive_path: Path
+    sha256: str
+    transaction_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class StagedUpdate:
+    update: UpdateInfo
+    staging_root: Path
+    source_path: Path
+    transaction_id: str = ""
+    content_manifest_path: Path | None = None
+    content_manifest_sha256: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class InstallerPlan:
+    script_path: Path
+    command: tuple[str, ...]
+    source_path: Path
+    target_path: Path
+    backup_path: Path
+    restart_executable: Path
+    parent_pid: int
+    lock_path: Path | None = None
+    incoming_path: Path | None = None
+    ready_path: Path | None = None
+    health_path: Path | None = None
+    result_path: Path | None = None
+    cleanup_path: Path | None = None
+    health_token: str = ""
+    content_root: Path | None = None
+    content_manifest_path: Path | None = None
+    content_manifest_sha256: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class SignedManifestAsset:
+    name: str
+    size: int
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class SignedUpdateManifest:
+    repository: str
+    version: str
+    assets: tuple[SignedManifestAsset, ...]
+
+    def asset_named(self, name: str) -> SignedManifestAsset | None:
+        return next((asset for asset in self.assets if asset.name == name), None)
+
+
+ProgressCallback = Callable[[int, int | None], None]
+CancelCallback = Callable[[], bool]
+
+
+def consume_install_result(updates_dir: Path) -> str | None:
+    """Return one unseen helper result while retaining a small diagnostic history."""
+
+    root = Path(updates_dir)
+    try:
+        pending = sorted(
+            root.glob("install-result-*.log"),
+            key=lambda path: path.stat().st_mtime_ns,
+        )
+    except OSError:
+        return None
+    if not pending:
+        return None
+    result_path = pending[-1]
+    try:
+        if result_path.stat().st_size > 4096:
+            outcome = "invalid_result"
+        else:
+            outcome = result_path.read_text(encoding="utf-8-sig").strip()
+        seen_path = result_path.with_name(f"{result_path.name}.seen")
+        result_path.replace(seen_path)
+        history = sorted(
+            root.glob("install-result-*.log.seen"),
+            key=lambda path: path.stat().st_mtime_ns,
+            reverse=True,
+        )
+        for obsolete in history[5:]:
+            obsolete.unlink(missing_ok=True)
+        return outcome
+    except OSError:
+        return None
+
+
+def validate_trusted_github_url(url: str) -> None:
+    """Reject non-HTTPS, credential-bearing and non-GitHub update URLs."""
+
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError as exc:
+        raise UpdateSecurityError("更新地址无效") from exc
+    host = (parsed.hostname or "").casefold().rstrip(".")
+    if (
+        parsed.scheme.casefold() != "https"
+        or not host
+        or host not in TRUSTED_GITHUB_DOWNLOAD_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+    ):
+        raise UpdateSecurityError("更新地址不是受信任的 GitHub HTTPS 地址")
+
+
+def _plain_asset_name(name: str) -> bool:
+    return (
+        bool(name)
+        and Path(name).name == name
+        and PurePosixPath(name).name == name
+        and "/" not in name
+        and "\\" not in name
+        and "\x00" not in name
+    )
+
+
+def parse_github_release(
+    payload: Mapping[str, Any], *, repository: str = DEFAULT_REPOSITORY
+) -> ReleaseInfo:
+    """Parse and validate GitHub's latest-release JSON response."""
+
+    if payload.get("draft") is not False or payload.get("prerelease") is not False:
+        raise UpdateError("GitHub 返回的不是正式发行版本")
+    tag_name = payload.get("tag_name")
+    if not isinstance(tag_name, str):
+        raise UpdateError("GitHub 发行信息缺少版本号")
+    try:
+        parsed_version = _SemanticVersion.parse(tag_name)
+    except ValueError as exc:
+        raise UpdateError("GitHub 发行版本号格式无效") from exc
+    if parsed_version.prerelease:
+        raise UpdateError("GitHub 返回的不是正式发行版本")
+    version = f"{parsed_version.major}.{parsed_version.minor}.{parsed_version.patch}"
+
+    raw_assets = payload.get("assets")
+    if not isinstance(raw_assets, list):
+        raise UpdateError("GitHub 发行信息缺少下载文件")
+    assets: list[ReleaseAsset] = []
+    used_names: set[str] = set()
+    for raw_asset in raw_assets:
+        if not isinstance(raw_asset, Mapping):
+            raise UpdateError("GitHub 发行文件信息无效")
+        name = raw_asset.get("name")
+        download_url = raw_asset.get("browser_download_url")
+        size = raw_asset.get("size")
+        digest = raw_asset.get("digest")
+        if (
+            not isinstance(name, str)
+            or not _plain_asset_name(name)
+            or not isinstance(download_url, str)
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+            or (digest is not None and not isinstance(digest, str))
+        ):
+            raise UpdateError("GitHub 发行文件信息无效")
+        validate_trusted_github_url(download_url)
+        if name in used_names:
+            raise UpdateError(f"GitHub 发行版本包含重复文件：{name}")
+        used_names.add(name)
+        assets.append(
+            ReleaseAsset(
+                name=name,
+                download_url=download_url,
+                size=size,
+                digest=digest,
+            )
+        )
+
+    default_page_url = f"https://github.com/{repository}/releases/tag/{tag_name}"
+    page_url = payload.get("html_url")
+    if not isinstance(page_url, str):
+        page_url = default_page_url
+    try:
+        validate_trusted_github_url(page_url)
+    except UpdateSecurityError:
+        page_url = default_page_url
+    name = payload.get("name")
+    notes = payload.get("body")
+    published_at = payload.get("published_at")
+    return ReleaseInfo(
+        version=version,
+        tag_name=tag_name,
+        name=name.strip() if isinstance(name, str) and name.strip() else tag_name,
+        notes=notes if isinstance(notes, str) else "",
+        page_url=page_url,
+        published_at=published_at if isinstance(published_at, str) else None,
+        assets=tuple(assets),
+    )
+
+
+class UpdateService:
+    """Secure, synchronous update primitives intended to run inside GUI workers."""
+
+    def __init__(
+        self,
+        *,
+        current_version: str,
+        updates_dir: Path,
+        repository: str = DEFAULT_REPOSITORY,
+        install_mode: InstallMode | str | None = None,
+        trusted_public_key: bytes | None = None,
+        transport: httpx.BaseTransport | None = None,
+        timeout_seconds: float = 30.0,
+        max_api_bytes: int = 2 * 1024 * 1024,
+        max_checksum_bytes: int = 1024 * 1024,
+        max_manifest_bytes: int = 1024 * 1024,
+        max_signature_bytes: int = 4096,
+        max_download_bytes: int = 2 * 1024 * 1024 * 1024,
+        max_extracted_bytes: int = 4 * 1024 * 1024 * 1024,
+        max_extracted_file_bytes: int = 2 * 1024 * 1024 * 1024,
+        max_archive_entries: int = 30_000,
+        max_compression_ratio: int = 1_000,
+    ) -> None:
+        try:
+            _SemanticVersion.parse(current_version)
+        except ValueError as exc:
+            raise ValueError("current_version 必须是有效的语义版本号") from exc
+        if not _REPOSITORY_PATTERN.fullmatch(repository):
+            raise ValueError("repository 必须采用 owner/name 格式")
+        positive_limits = (
+            timeout_seconds,
+            max_api_bytes,
+            max_checksum_bytes,
+            max_manifest_bytes,
+            max_signature_bytes,
+            max_download_bytes,
+            max_extracted_bytes,
+            max_extracted_file_bytes,
+            max_archive_entries,
+            max_compression_ratio,
+        )
+        if any(limit <= 0 for limit in positive_limits):
+            raise ValueError("更新服务的超时和体积限制必须大于零")
+        self.current_version = current_version
+        self.updates_dir = Path(updates_dir)
+        self.repository = repository
+        self.install_mode = (
+            detect_install_mode()
+            if install_mode is None
+            else InstallMode(install_mode)
+        )
+        public_key = (
+            base64.b64decode(TRUSTED_UPDATE_PUBLIC_KEY_B64, validate=True)
+            if trusted_public_key is None
+            else trusted_public_key
+        )
+        if len(public_key) != 32:
+            raise ValueError("trusted_public_key 必须是 32 字节 Ed25519 公钥")
+        self._trusted_public_key = bytes(public_key)
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+        self._max_api_bytes = max_api_bytes
+        self._max_checksum_bytes = max_checksum_bytes
+        self._max_manifest_bytes = max_manifest_bytes
+        self._max_signature_bytes = max_signature_bytes
+        self._max_download_bytes = max_download_bytes
+        self._max_extracted_bytes = max_extracted_bytes
+        self._max_extracted_file_bytes = max_extracted_file_bytes
+        self._max_archive_entries = max_archive_entries
+        self._max_compression_ratio = max_compression_ratio
+        self._transaction_lock_guard = threading.Lock()
+        self._transaction_lock_stream: BinaryIO | None = None
+        self._transaction_id: str | None = None
+
+    @property
+    def latest_release_url(self) -> str:
+        return f"{GITHUB_API_ROOT}/repos/{self.repository}/releases/latest"
+
+    @property
+    def transaction_lock_path(self) -> Path:
+        return self.updates_dir / ".update-transaction.lock"
+
+    def _acquire_update_lock(self) -> str:
+        with self._transaction_lock_guard:
+            if self._transaction_lock_stream is not None:
+                return self._transaction_id or ""
+            self.updates_dir.mkdir(parents=True, exist_ok=True)
+            stream = self.transaction_lock_path.open("a+b")
+            try:
+                stream.seek(0, os.SEEK_END)
+                if stream.tell() == 0:
+                    stream.write(b"\0")
+                    stream.flush()
+                stream.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (OSError, BlockingIOError) as exc:
+                stream.close()
+                raise UpdateError("另一个 MailDesk 实例正在处理更新") from exc
+            self._transaction_lock_stream = stream
+            self._transaction_id = uuid4().hex
+            return self._transaction_id
+
+    def release_update_lock(self) -> None:
+        with self._transaction_lock_guard:
+            stream = self._transaction_lock_stream
+            if stream is None:
+                return
+            try:
+                with suppress(OSError):
+                    stream.seek(0)
+                    if os.name == "nt":
+                        import msvcrt
+
+                        msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            finally:
+                stream.close()
+                self._transaction_lock_stream = None
+                self._transaction_id = None
+
+    def discard_staged_update(self, staged: StagedUpdate) -> None:
+        root = staged.staging_root.resolve()
+        updates_root = self.updates_dir.resolve()
+        if (
+            _is_relative_to(root, updates_root)
+            and root != updates_root
+            and root.name.startswith("staged-v")
+            and root.is_dir()
+            and not root.is_symlink()
+        ):
+            shutil.rmtree(root, ignore_errors=True)
+        self.release_update_lock()
+
+    def _client(self) -> httpx.Client:
+        return httpx.Client(
+            transport=self._transport,
+            timeout=httpx.Timeout(self._timeout_seconds, connect=10.0),
+            follow_redirects=False,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Accept-Encoding": "identity",
+                "User-Agent": f"MailDesk/{self.current_version} updater",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+
+    def fetch_latest_release(self) -> ReleaseInfo:
+        try:
+            with self._client() as client:
+                response = self._send_with_trusted_redirects(
+                    client, self.latest_release_url
+                )
+                try:
+                    if response.status_code != 200:
+                        raise UpdateNetworkError("GitHub 更新服务暂时不可用")
+                    content = self._read_limited(response, self._max_api_bytes)
+                finally:
+                    response.close()
+            payload = json.loads(content)
+        except (UpdateError, UpdateSecurityError):
+            raise
+        except (httpx.HTTPError, OSError) as exc:
+            raise UpdateNetworkError("无法连接 GitHub 更新服务") from exc
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise UpdateError("GitHub 更新服务返回了无法识别的数据") from exc
+        if not isinstance(payload, Mapping):
+            raise UpdateError("GitHub 更新服务返回了无法识别的数据")
+        return parse_github_release(payload, repository=self.repository)
+
+    def check_for_update(self) -> UpdateInfo | None:
+        release = self.fetch_latest_release()
+        if not is_newer_version(release.version, self.current_version):
+            return None
+        checksum_asset = release.asset_named(CHECKSUM_ASSET_NAME)
+        manifest_asset = release.asset_named(SIGNED_MANIFEST_ASSET_NAME)
+        signature_asset = release.asset_named(SIGNED_MANIFEST_SIGNATURE_NAME)
+        if manifest_asset is None or signature_asset is None:
+            raise UpdateSecurityError("新版本缺少 MailDesk 官方发布签名")
+        try:
+            with self._client() as client:
+                manifest = self._fetch_signed_manifest(
+                    client,
+                    release,
+                    manifest_asset,
+                    signature_asset,
+                )
+        except UpdateError:
+            raise
+        except (httpx.HTTPError, OSError) as exc:
+            raise UpdateNetworkError("无法验证新版本的发布者签名") from exc
+
+        asset: ReleaseAsset | None = None
+        signed_asset: SignedManifestAsset | None = None
+        if self.install_mode is not InstallMode.SOURCE:
+            expected_name = (
+                f"MailDesk-v{release.version}-windows-x64-"
+                f"{self.install_mode.value}.zip"
+            )
+            asset = release.asset_named(expected_name)
+            if asset is None:
+                raise UpdateError(f"新版本缺少当前安装类型的文件：{expected_name}")
+            if asset.size <= 0:
+                raise UpdateSecurityError("新版本更新包体积无效")
+            signed_asset = manifest.asset_named(expected_name)
+            if signed_asset is None:
+                raise UpdateSecurityError("签名清单未包含当前安装类型的更新包")
+            if asset.size != signed_asset.size:
+                raise UpdateSecurityError("更新包体积与签名清单不一致")
+            if asset.digest:
+                algorithm, separator, digest = asset.digest.partition(":")
+                if (
+                    separator != ":"
+                    or algorithm.casefold() != "sha256"
+                    or not _SHA256_PATTERN.fullmatch(digest)
+                    or not hmac.compare_digest(
+                        digest.casefold(), signed_asset.sha256
+                    )
+                ):
+                    raise UpdateSecurityError("GitHub 更新摘要与签名清单不一致")
+        return UpdateInfo(
+            current_version=self.current_version,
+            release=release,
+            install_mode=self.install_mode,
+            asset=asset,
+            checksum_asset=checksum_asset,
+            manifest_asset=manifest_asset,
+            signature_asset=signature_asset,
+            expected_sha256=signed_asset.sha256 if signed_asset else None,
+            expected_size=signed_asset.size if signed_asset else None,
+        )
+
+    def download_update(
+        self,
+        update: UpdateInfo,
+        *,
+        progress: ProgressCallback | None = None,
+        cancelled: CancelCallback | None = None,
+    ) -> DownloadedUpdate:
+        asset = update.asset
+        if not update.install_supported or asset is None:
+            raise UpdateError("源码运行模式不能自动覆盖安装，请前往发行页面下载")
+        if update.install_mode is not self.install_mode:
+            raise UpdateError("更新包类型与当前程序安装类型不一致")
+        if asset.size > self._max_download_bytes:
+            raise UpdateSecurityError("更新包超过允许的最大体积")
+        transaction_id = self._acquire_update_lock()
+        archive_suffix = Path(asset.name).suffix or ".zip"
+        archive_stem = Path(asset.name).stem
+        target = self.updates_dir / (
+            f"{archive_stem}-{transaction_id}{archive_suffix}"
+        )
+        partial = target.with_name(f"{target.name}.part")
+        partial.unlink(missing_ok=True)
+        try:
+            with self._client() as client:
+                expected_sha256 = self._expected_sha256(client, update)
+                actual_sha256 = self._download_asset(
+                    client,
+                    asset,
+                    partial,
+                    progress=progress,
+                    cancelled=cancelled,
+                )
+            if not hmac.compare_digest(actual_sha256, expected_sha256):
+                raise UpdateSecurityError("更新包 SHA-256 校验失败")
+            partial.replace(target)
+        except UpdateError:
+            partial.unlink(missing_ok=True)
+            self.release_update_lock()
+            raise
+        except (httpx.HTTPError, OSError) as exc:
+            partial.unlink(missing_ok=True)
+            self.release_update_lock()
+            raise UpdateNetworkError("更新包下载失败") from exc
+        except Exception:
+            partial.unlink(missing_ok=True)
+            self.release_update_lock()
+            raise
+        return DownloadedUpdate(
+            update=update,
+            archive_path=target,
+            sha256=actual_sha256,
+            transaction_id=transaction_id,
+        )
+
+    def stage_update(
+        self,
+        downloaded: DownloadedUpdate,
+        *,
+        cancelled: CancelCallback | None = None,
+    ) -> StagedUpdate:
+        if cancelled is not None and cancelled():
+            self.release_update_lock()
+            raise UpdateCancelledError("更新暂存已取消")
+        update = downloaded.update
+        if not update.install_supported or update.asset is None:
+            raise UpdateError("当前更新不能自动安装")
+        if update.install_mode is not self.install_mode:
+            raise UpdateError("更新包类型与当前程序安装类型不一致")
+        archive = downloaded.archive_path
+        if not archive.is_file():
+            raise UpdateError("已下载的更新包不存在")
+        actual_digest = _sha256_file(archive)
+        if not hmac.compare_digest(actual_digest, downloaded.sha256.casefold()):
+            raise UpdateSecurityError("更新包在暂存前发生了变化")
+
+        transaction_id = self._acquire_update_lock()
+        if downloaded.transaction_id and downloaded.transaction_id != transaction_id:
+            self.release_update_lock()
+            raise UpdateError("更新下载事务与当前进程不一致")
+        transaction_id = downloaded.transaction_id or transaction_id
+
+        temporary_root: Path | None = None
+        try:
+            self.updates_dir.mkdir(parents=True, exist_ok=True)
+            temporary_root = Path(
+                tempfile.mkdtemp(prefix=".extract-", dir=self.updates_dir)
+            )
+            final_root = self.updates_dir / (
+                f"staged-v{update.release.version}-{update.install_mode.value}-"
+                f"{transaction_id}"
+            )
+            self._safe_extract_zip(
+                archive,
+                temporary_root,
+                cancelled=cancelled,
+            )
+            prefix = (
+                f"MailDesk-v{update.release.version}-windows-x64-"
+                f"{update.install_mode.value}"
+            )
+            relative_source = (
+                Path(prefix) / "MailDesk.exe"
+                if update.install_mode is InstallMode.ONEFILE
+                else Path(prefix) / "MailDesk"
+            )
+            source = temporary_root / relative_source
+            expected_executable = (
+                source
+                if update.install_mode is InstallMode.ONEFILE
+                else source / "MailDesk.exe"
+            )
+            if not expected_executable.is_file():
+                raise UpdateSecurityError("更新包缺少预期的 MailDesk.exe")
+            _validate_staged_windows_executable(
+                expected_executable,
+                update.release.version,
+            )
+            if (
+                update.install_mode is InstallMode.ONEDIR
+                and not (source / "_internal").is_dir()
+            ):
+                raise UpdateSecurityError("更新包缺少 onedir 运行时目录")
+            content_root = (
+                source.parent
+                if update.install_mode is InstallMode.ONEFILE
+                else source
+            )
+            content_files = (
+                (source,)
+                if update.install_mode is InstallMode.ONEFILE
+                else tuple(path for path in source.rglob("*") if path.is_file())
+            )
+            content_manifest = temporary_root / ".staged-files-v1.json"
+            content_manifest_sha256 = _write_staged_content_manifest(
+                content_root,
+                content_files,
+                content_manifest,
+                cancelled=cancelled,
+            )
+            if final_root.exists():
+                if final_root.is_dir() and not final_root.is_symlink():
+                    shutil.rmtree(final_root)
+                else:
+                    final_root.unlink()
+            temporary_root.replace(final_root)
+            with suppress(OSError):
+                archive.unlink()
+            return StagedUpdate(
+                update=update,
+                staging_root=final_root,
+                source_path=final_root / relative_source,
+                transaction_id=transaction_id,
+                content_manifest_path=final_root / content_manifest.name,
+                content_manifest_sha256=content_manifest_sha256,
+            )
+        except UpdateError:
+            if temporary_root is not None:
+                shutil.rmtree(temporary_root, ignore_errors=True)
+            self.release_update_lock()
+            raise
+        except (OSError, zipfile.BadZipFile, zipfile.LargeZipFile, RuntimeError) as exc:
+            if temporary_root is not None:
+                shutil.rmtree(temporary_root, ignore_errors=True)
+            self.release_update_lock()
+            raise UpdateSecurityError("更新包不是有效且安全的 ZIP 文件") from exc
+
+    def create_installer_plan(
+        self,
+        staged: StagedUpdate,
+        *,
+        executable_path: Path | None = None,
+        parent_pid: int | None = None,
+        powershell_executable: str | os.PathLike[str] | None = None,
+    ) -> InstallerPlan:
+        mode = staged.update.install_mode
+        if mode is InstallMode.SOURCE:
+            raise UpdateError("源码运行模式不能自动安装")
+        if mode is not self.install_mode:
+            raise UpdateError("更新包类型与当前程序安装类型不一致")
+        executable = Path(executable_path or sys.executable).resolve()
+        if not executable.is_file():
+            raise UpdateError("找不到当前 MailDesk 可执行文件")
+        staging_root = staged.staging_root.resolve()
+        updates_root = self.updates_dir.resolve()
+        if (
+            staging_root == Path(staging_root.anchor)
+            or not staging_root.is_dir()
+            or not _is_relative_to(staging_root, updates_root)
+        ):
+            raise UpdateError("更新暂存目录不属于当前 MailDesk 更新事务")
+        source = staged.source_path.resolve()
+        if not _is_relative_to(source, staging_root):
+            raise UpdateError("更新源文件不属于当前 MailDesk 更新事务")
+        expected_executable = (
+            source if mode is InstallMode.ONEFILE else source / "MailDesk.exe"
+        )
+        if not expected_executable.is_file():
+            raise UpdateError("暂存区缺少新版 MailDesk 可执行文件")
+        if mode is InstallMode.ONEDIR and not (source / "_internal").is_dir():
+            raise UpdateError("暂存区缺少新版 onedir 运行时目录")
+        content_root = source.parent if mode is InstallMode.ONEFILE else source
+        content_manifest_path = (
+            staged.content_manifest_path.resolve()
+            if staged.content_manifest_path is not None
+            else staging_root / ".staged-files-v1.json"
+        )
+        if not _is_relative_to(content_manifest_path, staging_root):
+            raise UpdateError("更新完整性清单不属于当前 MailDesk 更新事务")
+        content_manifest_sha256 = staged.content_manifest_sha256
+        if staged.content_manifest_path is None and not content_manifest_sha256:
+            content_files = (
+                (source,)
+                if mode is InstallMode.ONEFILE
+                else tuple(path for path in source.rglob("*") if path.is_file())
+            )
+            content_manifest_sha256 = _write_staged_content_manifest(
+                content_root,
+                content_files,
+                content_manifest_path,
+            )
+        elif (
+            not content_manifest_path.is_file()
+            or not _SHA256_PATTERN.fullmatch(content_manifest_sha256)
+            or not hmac.compare_digest(
+                _sha256_file(content_manifest_path),
+                content_manifest_sha256.casefold(),
+            )
+        ):
+            raise UpdateSecurityError("更新暂存区完整性清单已被修改")
+        _verify_staged_content_manifest(
+            content_root,
+            content_manifest_path,
+            content_manifest_sha256,
+        )
+
+        if mode is InstallMode.ONEFILE:
+            target = executable
+            restart_executable = target
+        else:
+            target = executable.parent
+            restart_executable = target / "MailDesk.exe"
+        target = target.resolve()
+        if mode is InstallMode.ONEDIR and (
+            target == Path(target.anchor) or not (target / "_internal").is_dir()
+        ):
+            raise UpdateError("当前 onedir 程序目录结构无效，不能自动替换")
+        if _is_relative_to(source, target):
+            raise UpdateError("更新暂存区不能位于待替换的程序目录内")
+
+        process_id = os.getpid() if parent_pid is None else parent_pid
+        if process_id <= 0:
+            raise ValueError("parent_pid 必须大于零")
+        transaction_id = self._acquire_update_lock()
+        if staged.transaction_id and staged.transaction_id != transaction_id:
+            self.release_update_lock()
+            raise UpdateError("更新暂存事务与当前进程不一致")
+        backup = target.with_name(
+            f".{target.name}.maildesk-backup-{staged.update.release.version}-{process_id}"
+        )
+        incoming = target.with_name(
+            f".{target.name}.maildesk-incoming-"
+            f"{staged.update.release.version}-{transaction_id}"
+        )
+        health_token = uuid4().hex
+        ready_path = self.updates_dir / f".installer-ready-{transaction_id}"
+        health_path = self.updates_dir / f".health-{transaction_id}"
+        result_path = self.updates_dir / f"install-result-{transaction_id}.log"
+        script_path = self.updates_dir / (
+            f"install-v{staged.update.release.version}-{mode.value}-"
+            f"{transaction_id}.ps1"
+        )
+        try:
+            self.updates_dir.mkdir(parents=True, exist_ok=True)
+            for marker in (ready_path, health_path, result_path):
+                marker.unlink(missing_ok=True)
+            script_path.write_text(
+                _POWERSHELL_INSTALLER_SCRIPT,
+                encoding="utf-8-sig",
+                newline="\r\n",
+            )
+        except OSError as exc:
+            self.release_update_lock()
+            raise UpdateError("无法创建更新安装脚本") from exc
+        powershell = str(
+            powershell_executable or _default_powershell_executable()
+        )
+        command = (
+            powershell,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+            "-ParentPid",
+            str(process_id),
+            "-Mode",
+            mode.value,
+            "-SourcePath",
+            str(source),
+            "-TargetPath",
+            str(target),
+            "-BackupPath",
+            str(backup),
+            "-RestartExecutable",
+            str(restart_executable),
+            "-LockPath",
+            str(self.transaction_lock_path),
+            "-IncomingPath",
+            str(incoming),
+            "-ReadyPath",
+            str(ready_path),
+            "-HealthPath",
+            str(health_path),
+            "-ResultPath",
+            str(result_path),
+            "-CleanupPath",
+            str(staging_root),
+            "-HealthToken",
+            health_token,
+            "-ContentRoot",
+            str(content_root),
+            "-ContentManifestPath",
+            str(content_manifest_path),
+            "-ContentManifestSha256",
+            content_manifest_sha256,
+        )
+        return InstallerPlan(
+            script_path=script_path,
+            command=command,
+            source_path=source,
+            target_path=target,
+            backup_path=backup,
+            restart_executable=restart_executable,
+            parent_pid=process_id,
+            lock_path=self.transaction_lock_path,
+            incoming_path=incoming,
+            ready_path=ready_path,
+            health_path=health_path,
+            result_path=result_path,
+            cleanup_path=staging_root,
+            health_token=health_token,
+            content_root=content_root,
+            content_manifest_path=content_manifest_path,
+            content_manifest_sha256=content_manifest_sha256,
+        )
+
+    def launch_installer(self, plan: InstallerPlan) -> subprocess.Popen[bytes]:
+        """Launch the external helper; the GUI should quit only after this succeeds."""
+
+        creation_flags = 0
+        if os.name == "nt":
+            creation_flags = subprocess.CREATE_NO_WINDOW
+        try:
+            process = subprocess.Popen(
+                plan.command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                creationflags=creation_flags,
+            )
+        except OSError as exc:
+            self.release_update_lock()
+            raise UpdateError("无法启动更新安装程序") from exc
+        if plan.ready_path is None or not plan.health_token:
+            return process
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline:
+            try:
+                ready = plan.ready_path.read_text(encoding="utf-8-sig").strip()
+            except OSError:
+                ready = ""
+            if hmac.compare_digest(ready, plan.health_token):
+                return process
+            if process.poll() is not None:
+                break
+            time.sleep(0.05)
+        with suppress(OSError):
+            process.terminate()
+        self.release_update_lock()
+        raise UpdateError("更新安装程序未能安全接管，当前版本将继续运行")
+
+    def _fetch_signed_manifest(
+        self,
+        client: httpx.Client,
+        release: ReleaseInfo,
+        manifest_asset: ReleaseAsset,
+        signature_asset: ReleaseAsset,
+    ) -> SignedUpdateManifest:
+        if (
+            manifest_asset.size <= 0
+            or manifest_asset.size > self._max_manifest_bytes
+            or signature_asset.size != 64
+            or signature_asset.size > self._max_signature_bytes
+        ):
+            raise UpdateSecurityError("更新签名文件体积无效")
+        manifest_bytes = self._download_small_release_asset(
+            client,
+            manifest_asset,
+            self._max_manifest_bytes,
+        )
+        signature = self._download_small_release_asset(
+            client,
+            signature_asset,
+            self._max_signature_bytes,
+        )
+        if len(signature) != 64:
+            raise UpdateSecurityError("更新签名格式无效")
+        try:
+            Ed25519PublicKey.from_public_bytes(self._trusted_public_key).verify(
+                signature,
+                manifest_bytes,
+            )
+        except (InvalidSignature, ValueError) as exc:
+            raise UpdateSecurityError("新版本未通过 MailDesk 发布者签名验证") from exc
+        return _parse_signed_update_manifest(
+            manifest_bytes,
+            repository=self.repository,
+            release_version=release.version,
+        )
+
+    def _download_small_release_asset(
+        self,
+        client: httpx.Client,
+        asset: ReleaseAsset,
+        limit: int,
+    ) -> bytes:
+        if asset.size <= 0 or asset.size > limit:
+            raise UpdateSecurityError("更新签名文件体积无效")
+        response = self._send_with_trusted_redirects(client, asset.download_url)
+        try:
+            if response.status_code != 200:
+                raise UpdateNetworkError("无法下载更新签名文件")
+            content = self._read_limited(response, limit)
+        finally:
+            response.close()
+        if len(content) != asset.size:
+            raise UpdateSecurityError("更新签名文件下载不完整")
+        return content
+
+    def _expected_sha256(
+        self, client: httpx.Client, update: UpdateInfo
+    ) -> str:
+        del client
+        asset = update.asset
+        if asset is None:
+            raise UpdateError("当前更新没有可下载文件")
+        expected = update.expected_sha256
+        if (
+            expected is None
+            or not _SHA256_PATTERN.fullmatch(expected)
+            or update.expected_size != asset.size
+        ):
+            raise UpdateSecurityError("更新任务缺少有效的发布者签名清单")
+        return expected.casefold()
+
+    def _download_asset(
+        self,
+        client: httpx.Client,
+        asset: ReleaseAsset,
+        partial: Path,
+        *,
+        progress: ProgressCallback | None,
+        cancelled: CancelCallback | None,
+    ) -> str:
+        if cancelled is not None and cancelled():
+            raise UpdateCancelledError("更新下载已取消")
+        response = self._send_with_trusted_redirects(client, asset.download_url)
+        digest = hashlib.sha256()
+        received = 0
+        try:
+            if response.status_code != 200:
+                raise UpdateNetworkError("GitHub 更新文件暂时不可用")
+            content_length = _content_length(response)
+            if content_length is not None and content_length > self._max_download_bytes:
+                raise UpdateSecurityError("更新包超过允许的最大体积")
+            if asset.size and content_length is not None and content_length != asset.size:
+                raise UpdateSecurityError("更新包下载体积与 GitHub 发行信息不一致")
+            total = asset.size or content_length
+            if progress is not None:
+                progress(0, total)
+            with partial.open("xb") as stream:
+                for chunk in response.iter_bytes(chunk_size=1024 * 1024):
+                    if cancelled is not None and cancelled():
+                        raise UpdateCancelledError("更新下载已取消")
+                    if not chunk:
+                        continue
+                    received += len(chunk)
+                    if received > self._max_download_bytes:
+                        raise UpdateSecurityError("更新包超过允许的最大体积")
+                    if asset.size and received > asset.size:
+                        raise UpdateSecurityError("更新包下载体积与 GitHub 发行信息不一致")
+                    stream.write(chunk)
+                    digest.update(chunk)
+                    if progress is not None:
+                        progress(received, total)
+            if asset.size and received != asset.size:
+                raise UpdateNetworkError("更新包下载不完整")
+            if content_length is not None and received != content_length:
+                raise UpdateNetworkError("更新包下载不完整")
+        finally:
+            response.close()
+        return digest.hexdigest()
+
+    def _safe_extract_zip(
+        self,
+        archive_path: Path,
+        destination: Path,
+        *,
+        cancelled: CancelCallback | None = None,
+    ) -> None:
+        destination_root = destination.resolve()
+        with zipfile.ZipFile(archive_path) as archive:
+            entries = archive.infolist()
+            if len(entries) > self._max_archive_entries:
+                raise UpdateSecurityError("更新包内文件数量异常")
+            planned: list[tuple[zipfile.ZipInfo, Path]] = []
+            normalized_names: set[str] = set()
+            total_size = 0
+            for info in entries:
+                if cancelled is not None and cancelled():
+                    raise UpdateCancelledError("更新暂存已取消")
+                parts = _safe_zip_parts(info)
+                normalized_name = "/".join(part.casefold() for part in parts)
+                if normalized_name in normalized_names:
+                    raise UpdateSecurityError("更新包包含名称冲突的文件")
+                normalized_names.add(normalized_name)
+                total_size += info.file_size
+                if info.file_size > self._max_extracted_file_bytes:
+                    raise UpdateSecurityError("更新包内单个文件体积异常")
+                if total_size > self._max_extracted_bytes:
+                    raise UpdateSecurityError("更新包解压后体积异常")
+                if (
+                    (info.file_size and info.compress_size == 0)
+                    or (
+                        info.compress_size > 0
+                        and info.file_size / info.compress_size
+                        > self._max_compression_ratio
+                    )
+                ):
+                    raise UpdateSecurityError("更新包压缩比例异常")
+                target = destination_root.joinpath(*parts).resolve()
+                if not _is_relative_to(target, destination_root):
+                    raise UpdateSecurityError("更新包包含越界路径")
+                planned.append((info, target))
+
+            extracted_size = 0
+            for info, target in planned:
+                if cancelled is not None and cancelled():
+                    raise UpdateCancelledError("更新暂存已取消")
+                if info.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                file_size = 0
+                with archive.open(info, "r") as source, target.open("xb") as output:
+                    while chunk := source.read(1024 * 1024):
+                        if cancelled is not None and cancelled():
+                            raise UpdateCancelledError("更新暂存已取消")
+                        file_size += len(chunk)
+                        extracted_size += len(chunk)
+                        if (
+                            file_size > self._max_extracted_file_bytes
+                            or extracted_size > self._max_extracted_bytes
+                            or file_size > info.file_size
+                        ):
+                            raise UpdateSecurityError("更新包解压后体积异常")
+                        output.write(chunk)
+                if file_size != info.file_size:
+                    raise UpdateSecurityError("更新包内文件长度无效")
+
+    @staticmethod
+    def _send_with_trusted_redirects(
+        client: httpx.Client, url: str, *, max_redirects: int = 5
+    ) -> httpx.Response:
+        current_url = url
+        for redirect_count in range(max_redirects + 1):
+            validate_trusted_github_url(current_url)
+            request = client.build_request("GET", current_url)
+            validate_trusted_github_url(str(request.url))
+            response = client.send(request, stream=True)
+            if response.status_code not in _REDIRECT_STATUS_CODES:
+                return response
+            location = response.headers.get("location")
+            response.close()
+            if not location:
+                raise UpdateNetworkError("GitHub 更新服务返回了无效跳转")
+            if redirect_count >= max_redirects:
+                raise UpdateNetworkError("GitHub 更新服务跳转次数过多")
+            current_url = urljoin(str(request.url), location)
+        raise UpdateNetworkError("GitHub 更新服务跳转次数过多")
+
+    @staticmethod
+    def _read_limited(response: httpx.Response, limit: int) -> bytes:
+        content_length = _content_length(response)
+        if content_length is not None and content_length > limit:
+            raise UpdateSecurityError("更新服务响应体积异常")
+        content = bytearray()
+        for chunk in response.iter_bytes(chunk_size=64 * 1024):
+            content.extend(chunk)
+            if len(content) > limit:
+                raise UpdateSecurityError("更新服务响应体积异常")
+        return bytes(content)
+
+
+def _parse_signed_update_manifest(
+    content: bytes,
+    *,
+    repository: str,
+    release_version: str,
+) -> SignedUpdateManifest:
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON key")
+            result[key] = value
+        return result
+
+    try:
+        payload = json.loads(content, object_pairs_hook=unique_object)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise UpdateSecurityError("更新签名清单格式无效") from exc
+    if not isinstance(payload, dict) or set(payload) != {
+        "schema",
+        "repository",
+        "version",
+        "assets",
+    }:
+        raise UpdateSecurityError("更新签名清单结构无效")
+    if payload["schema"] != 1 or payload["repository"] != repository:
+        raise UpdateSecurityError("更新签名清单不属于当前 MailDesk 仓库")
+    version = payload["version"]
+    if not isinstance(version, str) or version != release_version:
+        raise UpdateSecurityError("更新签名清单版本与 Release 不一致")
+    try:
+        parsed_version = _SemanticVersion.parse(version)
+    except ValueError as exc:
+        raise UpdateSecurityError("更新签名清单版本无效") from exc
+    if parsed_version.prerelease or parsed_version.normalized != version:
+        raise UpdateSecurityError("更新签名清单版本无效")
+
+    raw_assets = payload["assets"]
+    if not isinstance(raw_assets, dict) or not 1 <= len(raw_assets) <= 32:
+        raise UpdateSecurityError("更新签名清单的文件列表无效")
+    assets: list[SignedManifestAsset] = []
+    for name, raw_asset in raw_assets.items():
+        if not isinstance(name, str) or not _plain_asset_name(name):
+            raise UpdateSecurityError("更新签名清单包含无效文件名")
+        if not isinstance(raw_asset, dict) or set(raw_asset) != {"sha256", "size"}:
+            raise UpdateSecurityError("更新签名清单包含无效文件信息")
+        size = raw_asset["size"]
+        digest = raw_asset["sha256"]
+        if (
+            not isinstance(size, int)
+            or isinstance(size, bool)
+            or size <= 0
+            or not isinstance(digest, str)
+            or not _SHA256_PATTERN.fullmatch(digest)
+        ):
+            raise UpdateSecurityError("更新签名清单包含无效文件信息")
+        assets.append(
+            SignedManifestAsset(
+                name=name,
+                size=size,
+                sha256=digest.casefold(),
+            )
+        )
+    return SignedUpdateManifest(
+        repository=repository,
+        version=version,
+        assets=tuple(assets),
+    )
+
+
+def _checksum_for_asset(checksum_text: str, asset_name: str) -> str:
+    matches: list[str] = []
+    for line in checksum_text.splitlines():
+        match = _CHECKSUM_LINE_PATTERN.fullmatch(line)
+        if match is None:
+            continue
+        if match.group(2) == asset_name:
+            matches.append(match.group(1).casefold())
+    if len(matches) != 1:
+        raise UpdateSecurityError("SHA256SUMS.txt 未包含唯一的目标更新包摘要")
+    return matches[0]
+
+
+def _content_length(response: httpx.Response) -> int | None:
+    raw_length = response.headers.get("content-length")
+    if raw_length is None:
+        return None
+    try:
+        length = int(raw_length)
+    except ValueError as exc:
+        raise UpdateSecurityError("更新服务返回了无效的文件长度") from exc
+    if length < 0:
+        raise UpdateSecurityError("更新服务返回了无效的文件长度")
+    return length
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _validate_staged_windows_executable(path: Path, version: str) -> None:
+    if os.name != "nt" or not bool(getattr(sys, "frozen", False)):
+        return
+    try:
+        with path.open("rb") as stream:
+            dos_header = stream.read(64)
+            if len(dos_header) != 64 or dos_header[:2] != b"MZ":
+                raise ValueError("missing DOS header")
+            pe_offset = struct.unpack_from("<I", dos_header, 0x3C)[0]
+            if pe_offset < 64 or pe_offset > 64 * 1024 * 1024:
+                raise ValueError("invalid PE offset")
+            stream.seek(pe_offset)
+            pe_header = stream.read(6)
+        if len(pe_header) != 6 or pe_header[:4] != b"PE\0\0":
+            raise ValueError("missing PE header")
+        if struct.unpack_from("<H", pe_header, 4)[0] != 0x8664:
+            raise ValueError("not an x64 executable")
+        import win32api  # type: ignore[import-not-found]
+
+        info = win32api.GetFileVersionInfo(str(path), "\\")
+        file_version_ms = int(info["FileVersionMS"])
+        file_version_ls = int(info["FileVersionLS"])
+        actual = (
+            file_version_ms >> 16,
+            file_version_ms & 0xFFFF,
+            file_version_ls >> 16,
+            file_version_ls & 0xFFFF,
+        )
+        expected = (*map(int, version.split(".")), 0)
+        if actual != expected:
+            raise ValueError("version mismatch")
+    except (OSError, KeyError, TypeError, ValueError, struct.error) as exc:
+        raise UpdateSecurityError(
+            "更新包中的 MailDesk.exe 不是预期版本的 Windows x64 程序"
+        ) from exc
+
+
+def _write_staged_content_manifest(
+    content_root: Path,
+    files: tuple[Path, ...],
+    manifest_path: Path,
+    *,
+    cancelled: CancelCallback | None = None,
+) -> str:
+    entries: list[dict[str, object]] = []
+    for path in sorted(files, key=lambda item: item.relative_to(content_root).as_posix()):
+        if cancelled is not None and cancelled():
+            raise UpdateCancelledError("更新暂存已取消")
+        if path.is_symlink() or not path.is_file():
+            raise UpdateSecurityError("更新暂存区包含链接或特殊文件")
+        relative = path.relative_to(content_root).as_posix()
+        if not relative or relative.startswith("../"):
+            raise UpdateSecurityError("更新暂存区文件路径无效")
+        entries.append(
+            {
+                "path": relative,
+                "size": path.stat().st_size,
+                "sha256": _sha256_file(path),
+            }
+        )
+    if not entries:
+        raise UpdateSecurityError("更新暂存区没有可安装文件")
+    content = json.dumps(
+        {"schema": 1, "files": entries},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    manifest_path.write_bytes(content)
+    return hashlib.sha256(content).hexdigest()
+
+
+def _verify_staged_content_manifest(
+    content_root: Path,
+    manifest_path: Path,
+    expected_sha256: str,
+) -> None:
+    try:
+        content = manifest_path.read_bytes()
+        if not hmac.compare_digest(
+            hashlib.sha256(content).hexdigest(),
+            expected_sha256.casefold(),
+        ):
+            raise ValueError("manifest hash mismatch")
+        payload = json.loads(content)
+        files = payload["files"]
+        if payload.get("schema") != 1 or not isinstance(files, list):
+            raise ValueError("manifest schema")
+        if not 1 <= len(files) <= 30_000:
+            raise ValueError("manifest file count")
+        root = content_root.resolve()
+        used_paths: set[str] = set()
+        for entry in files:
+            if not isinstance(entry, dict) or set(entry) != {"path", "sha256", "size"}:
+                raise ValueError("manifest entry")
+            relative = entry["path"]
+            size = entry["size"]
+            digest = entry["sha256"]
+            if (
+                not isinstance(relative, str)
+                or not relative
+                or "\\" in relative
+                or PurePosixPath(relative).is_absolute()
+                or any(part in {"", ".", ".."} for part in PurePosixPath(relative).parts)
+                or not isinstance(size, int)
+                or isinstance(size, bool)
+                or size < 0
+                or not isinstance(digest, str)
+                or not _SHA256_PATTERN.fullmatch(digest)
+            ):
+                raise ValueError("manifest entry value")
+            normalized = relative.casefold()
+            if normalized in used_paths:
+                raise ValueError("duplicate manifest path")
+            used_paths.add(normalized)
+            candidate = root.joinpath(*PurePosixPath(relative).parts)
+            path = candidate.resolve()
+            if (
+                not _is_relative_to(path, root)
+                or candidate.is_symlink()
+                or not path.is_file()
+                or path.stat().st_size != size
+                or not hmac.compare_digest(_sha256_file(path), digest.casefold())
+            ):
+                raise ValueError("staged content mismatch")
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise UpdateSecurityError("更新暂存文件已被修改，已阻止安装") from exc
+
+
+def _safe_zip_parts(info: zipfile.ZipInfo) -> tuple[str, ...]:
+    name = info.filename
+    if not name or "\x00" in name or "\\" in name:
+        raise UpdateSecurityError("更新包包含无效路径")
+    path = PurePosixPath(name)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise UpdateSecurityError("更新包包含越界路径")
+    parts = tuple(path.parts)
+    for part in parts:
+        stem = part.split(".", 1)[0].casefold()
+        if (
+            ":" in part
+            or part.endswith((" ", "."))
+            or stem in _WINDOWS_RESERVED_NAMES
+        ):
+            raise UpdateSecurityError("更新包包含 Windows 不支持的路径")
+    if info.flag_bits & 0x1:
+        raise UpdateSecurityError("更新包包含加密文件")
+    unix_mode = info.external_attr >> 16
+    file_type = stat.S_IFMT(unix_mode)
+    if stat.S_ISLNK(unix_mode) or file_type not in (0, stat.S_IFREG, stat.S_IFDIR):
+        raise UpdateSecurityError("更新包包含链接或特殊文件")
+    if (info.is_dir() and file_type == stat.S_IFREG) or (
+        not info.is_dir() and file_type == stat.S_IFDIR
+    ):
+        raise UpdateSecurityError("更新包文件类型与路径不一致")
+    return parts
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _default_powershell_executable() -> str:
+    system_root = os.environ.get("SYSTEMROOT")
+    if system_root:
+        candidate = (
+            Path(system_root)
+            / "System32"
+            / "WindowsPowerShell"
+            / "v1.0"
+            / "powershell.exe"
+        )
+        if candidate.is_file():
+            return str(candidate)
+    return "powershell.exe"
+
+
+_POWERSHELL_INSTALLER_SCRIPT = r'''param(
+    [Parameter(Mandatory = $true)][int]$ParentPid,
+    [Parameter(Mandatory = $true)][ValidateSet("onefile", "onedir")][string]$Mode,
+    [Parameter(Mandatory = $true)][string]$SourcePath,
+    [Parameter(Mandatory = $true)][string]$TargetPath,
+    [Parameter(Mandatory = $true)][string]$BackupPath,
+    [Parameter(Mandatory = $true)][string]$RestartExecutable,
+    [Parameter(Mandatory = $true)][string]$LockPath,
+    [Parameter(Mandatory = $true)][string]$IncomingPath,
+    [Parameter(Mandatory = $true)][string]$ReadyPath,
+    [Parameter(Mandatory = $true)][string]$HealthPath,
+    [Parameter(Mandatory = $true)][string]$ResultPath,
+    [Parameter(Mandatory = $true)][string]$CleanupPath,
+    [Parameter(Mandatory = $true)][ValidatePattern("^[0-9a-f]{32}$")][string]$HealthToken,
+    [Parameter(Mandatory = $true)][string]$ContentRoot,
+    [Parameter(Mandatory = $true)][string]$ContentManifestPath,
+    [Parameter(Mandatory = $true)][ValidatePattern("^[0-9a-f]{64}$")][string]$ContentManifestSha256
+)
+
+$ErrorActionPreference = "Stop"
+
+try {
+    Set-Content -LiteralPath $ReadyPath -Value $HealthToken -Encoding UTF8 -NoNewline
+} catch {
+    exit 3
+}
+
+try {
+    $ParentProcess = Get-Process -Id $ParentPid -ErrorAction Stop
+    if (-not $ParentProcess.WaitForExit(120000)) {
+        Set-Content -LiteralPath $ResultPath -Value "parent_exit_timeout" -Encoding UTF8
+        exit 4
+    }
+} catch {
+    # The parent already exited between helper launch and process lookup.
+}
+
+try {
+    $LockStream = [System.IO.File]::Open(
+        $LockPath,
+        [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None
+    )
+} catch {
+    Set-Content -LiteralPath $ResultPath -Value "transaction_lock_failed" -Encoding UTF8
+    if (Test-Path -LiteralPath $RestartExecutable) {
+        Start-Process `
+            -FilePath $RestartExecutable `
+            -WorkingDirectory (Split-Path -Parent $RestartExecutable)
+    }
+    exit 2
+}
+
+$HadOriginal = Test-Path -LiteralPath $TargetPath
+$OriginalMoved = $false
+
+try {
+    $ManifestItem = Get-Item -LiteralPath $ContentManifestPath -Force
+    if (($ManifestItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Update content manifest is a reparse point"
+    }
+    $ManifestHash = (
+        Get-FileHash -LiteralPath $ContentManifestPath -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+    if ($ManifestHash -cne $ContentManifestSha256) {
+        throw "Update content manifest hash mismatch"
+    }
+    $ContentManifest = Get-Content -LiteralPath $ContentManifestPath -Raw |
+        ConvertFrom-Json
+    if ($ContentManifest.schema -ne 1 -or $ContentManifest.files.Count -lt 1) {
+        throw "Update content manifest format is invalid"
+    }
+    $NormalizedRoot = [System.IO.Path]::GetFullPath($ContentRoot).TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar
+    ) + [System.IO.Path]::DirectorySeparatorChar
+    foreach ($FileEntry in $ContentManifest.files) {
+        $RelativePath = [string]$FileEntry.path
+        $Segments = $RelativePath.Split('/')
+        if (
+            [System.IO.Path]::IsPathRooted($RelativePath) -or
+            $Segments.Count -lt 1 -or
+            ($Segments | Where-Object { $_ -eq "" -or $_ -eq "." -or $_ -eq ".." }).Count -gt 0
+        ) {
+            throw "Update content manifest path is invalid"
+        }
+        $PlatformRelative = $Segments -join [System.IO.Path]::DirectorySeparatorChar
+        $Candidate = [System.IO.Path]::GetFullPath(
+            [System.IO.Path]::Combine($ContentRoot, $PlatformRelative)
+        )
+        if (-not $Candidate.StartsWith(
+            $NormalizedRoot,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "Update content manifest path escapes staging"
+        }
+        $CandidateItem = Get-Item -LiteralPath $Candidate -Force
+        $CandidateHash = (
+            Get-FileHash -LiteralPath $Candidate -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
+        if (
+            $CandidateItem.PSIsContainer -or
+            ($CandidateItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $CandidateItem.Length -ne [int64]$FileEntry.size -or
+            $CandidateHash -cne [string]$FileEntry.sha256
+        ) {
+            throw "Update staged file integrity check failed"
+        }
+    }
+    $SourceItem = Get-Item -LiteralPath $SourcePath -Force
+    if (($SourceItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Update source is a reparse point"
+    }
+    if ($Mode -eq "onedir") {
+        $ReparseItem = Get-ChildItem -LiteralPath $SourcePath -Force -Recurse |
+            Where-Object {
+                ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+            } |
+            Select-Object -First 1
+        if ($null -ne $ReparseItem) {
+            throw "Update source contains a reparse point"
+        }
+    }
+    if (Test-Path -LiteralPath $IncomingPath) {
+        Remove-Item -LiteralPath $IncomingPath -Recurse -Force
+    }
+    if ($Mode -eq "onefile") {
+        Copy-Item -LiteralPath $SourcePath -Destination $IncomingPath -Force
+        if (-not (Test-Path -LiteralPath $IncomingPath -PathType Leaf)) {
+            throw "Incoming onefile executable is missing"
+        }
+    } else {
+        Copy-Item -LiteralPath $SourcePath -Destination $IncomingPath -Recurse -Force
+        if (-not (Test-Path -LiteralPath (Join-Path $IncomingPath "MailDesk.exe") -PathType Leaf)) {
+            throw "Incoming onedir executable is missing"
+        }
+        if (-not (Test-Path `
+            -LiteralPath (Join-Path $IncomingPath "_internal") `
+            -PathType Container
+        )) {
+            throw "Incoming onedir runtime is missing"
+        }
+    }
+    if (Test-Path -LiteralPath $BackupPath) {
+        Remove-Item -LiteralPath $BackupPath -Recurse -Force
+    }
+    if ($HadOriginal) {
+        Move-Item -LiteralPath $TargetPath -Destination $BackupPath
+        $OriginalMoved = $true
+    }
+    Move-Item -LiteralPath $IncomingPath -Destination $TargetPath
+    $env:MAILDESK_UPDATE_HEALTH_TOKEN = $HealthToken
+    $env:MAILDESK_UPDATE_HEALTH_FILE = $HealthPath
+    $NewProcess = Start-Process `
+        -FilePath $RestartExecutable `
+        -WorkingDirectory (Split-Path -Parent $RestartExecutable) `
+        -PassThru
+    $Healthy = $false
+    $Deadline = [DateTime]::UtcNow.AddSeconds(120)
+    while ([DateTime]::UtcNow -lt $Deadline) {
+        if (Test-Path -LiteralPath $HealthPath -PathType Leaf) {
+            $HealthValue = (Get-Content -LiteralPath $HealthPath -Raw).Trim()
+            if ($HealthValue -ceq $HealthToken) {
+                $Healthy = $true
+                break
+            }
+        }
+        $NewProcess.Refresh()
+        if ($NewProcess.HasExited) {
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not $Healthy) {
+        $NewProcess.Refresh()
+        if (-not $NewProcess.HasExited) {
+            Stop-Process -Id $NewProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+        throw "New MailDesk process did not report healthy startup"
+    }
+    Start-Sleep -Seconds 3
+    $NewProcess.Refresh()
+    if ($NewProcess.HasExited) {
+        throw "New MailDesk process exited during startup health check"
+    }
+    Set-Content -LiteralPath $ResultPath -Value "success" -Encoding UTF8
+    try {
+        if (Test-Path -LiteralPath $BackupPath) {
+            Remove-Item -LiteralPath $BackupPath -Recurse -Force
+        }
+        if (Test-Path -LiteralPath $CleanupPath) {
+            Remove-Item -LiteralPath $CleanupPath -Recurse -Force
+        }
+        Remove-Item -LiteralPath $HealthPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $ReadyPath -Force -ErrorAction SilentlyContinue
+    } catch {
+        # Cleanup failure does not invalidate an otherwise healthy update.
+    }
+    $LockStream.Dispose()
+    exit 0
+} catch {
+    try {
+        Remove-Item Env:MAILDESK_UPDATE_HEALTH_TOKEN -ErrorAction SilentlyContinue
+        Remove-Item Env:MAILDESK_UPDATE_HEALTH_FILE -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $IncomingPath) {
+            Remove-Item -LiteralPath $IncomingPath -Recurse -Force
+        }
+        if ($OriginalMoved) {
+            if (Test-Path -LiteralPath $TargetPath) {
+                Remove-Item -LiteralPath $TargetPath -Recurse -Force
+            }
+            if (Test-Path -LiteralPath $BackupPath) {
+                Move-Item -LiteralPath $BackupPath -Destination $TargetPath
+            }
+        } elseif (-not $HadOriginal -and (Test-Path -LiteralPath $TargetPath)) {
+            Remove-Item -LiteralPath $TargetPath -Recurse -Force
+        }
+        try {
+            Set-Content `
+                -LiteralPath $ResultPath `
+                -Value "failed_and_rolled_back" `
+                -Encoding UTF8
+        } catch {
+            # A diagnostic write failure must not prevent restarting the old version.
+        }
+        if (Test-Path -LiteralPath $RestartExecutable) {
+            Start-Process `
+                -FilePath $RestartExecutable `
+                -WorkingDirectory (Split-Path -Parent $RestartExecutable)
+        }
+    } catch {
+        # Preserve the original failure exit code even if rollback also fails.
+    }
+    try {
+        if (-not (Test-Path -LiteralPath $ResultPath -PathType Leaf)) {
+            Set-Content `
+                -LiteralPath $ResultPath `
+                -Value "failed_rollback_incomplete" `
+                -Encoding UTF8
+        }
+    } catch {
+        # The updater still exits with failure if diagnostics cannot be written.
+    }
+    $LockStream.Dispose()
+    exit 1
+}
+'''

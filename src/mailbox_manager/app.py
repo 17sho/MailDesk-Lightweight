@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
+from mailbox_manager import __version__
 from mailbox_manager.config import AppPaths
 from mailbox_manager.gui.main_window import MainWindow
 from mailbox_manager.gui.modern_style import install_modern_style
@@ -20,6 +22,7 @@ from mailbox_manager.services.eml_store import EmlStore
 from mailbox_manager.services.fetch_service import FetchService
 from mailbox_manager.services.send_service import SendService
 from mailbox_manager.services.throttle import ComplianceThrottle
+from mailbox_manager.services.update_service import UpdateService, consume_install_result
 from mailbox_manager.storage.crypto import CredentialCipher
 from mailbox_manager.storage.database import Database
 from mailbox_manager.storage.enterprise_repositories import (
@@ -36,6 +39,7 @@ from mailbox_manager.storage.enterprise_repositories import (
 from mailbox_manager.storage.repositories import AccountRepository, MessageRepository
 
 _TRANSLATORS: list[QTranslator] = []
+_UPDATE_HEALTH_TOKEN_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
 def create_main_window(paths: AppPaths | None = None) -> MainWindow:
@@ -84,6 +88,10 @@ def create_main_window(paths: AppPaths | None = None) -> MainWindow:
         audit_reports=AuditReportService(audits, paths.logs),
         eml_store=eml_store,
         send_service=SendService(audit_repository=audits),
+        update_service=UpdateService(
+            current_version=__version__,
+            updates_dir=paths.updates,
+        ),
     )
 
 
@@ -112,6 +120,30 @@ def configure_translations(application: QApplication) -> bool:
         application.installTranslator(translator)
         _TRANSLATORS.append(translator)
     return loaded
+
+
+def report_update_health(paths: AppPaths) -> bool:
+    """Acknowledge a successful updater restart without trusting arbitrary paths."""
+
+    token = os.environ.pop("MAILDESK_UPDATE_HEALTH_TOKEN", "").strip()
+    raw_path = os.environ.pop("MAILDESK_UPDATE_HEALTH_FILE", "").strip()
+    if not token and not raw_path:
+        return False
+    if not _UPDATE_HEALTH_TOKEN_PATTERN.fullmatch(token) or not raw_path:
+        raise ValueError("更新健康检查参数无效")
+    health_path = Path(raw_path).resolve()
+    updates_root = paths.updates.resolve()
+    if (
+        os.path.normcase(str(health_path.parent))
+        != os.path.normcase(str(updates_root))
+        or not health_path.name.startswith(".health-")
+    ):
+        raise ValueError("更新健康检查路径无效")
+    updates_root.mkdir(parents=True, exist_ok=True)
+    temporary = health_path.with_name(f"{health_path.name}.{os.getpid()}.tmp")
+    temporary.write_text(token, encoding="utf-8", newline="")
+    temporary.replace(health_path)
+    return True
 
 
 def run() -> int:
@@ -151,6 +183,20 @@ def run() -> int:
         window.enable_tray(tray)
         tray.show()
     window.show()
+    try:
+        if report_update_health(paths):
+            logger.info("MailDesk update startup health check passed")
+    except Exception:
+        logger.exception("Unable to report update startup health")
+    install_result = consume_install_result(paths.updates)
+    if install_result and install_result != "success":
+        logger.error("Previous MailDesk update result: %s", install_result)
+        QMessageBox.warning(
+            window,
+            "自动更新已回滚",
+            "上一次自动更新未能安全启动，新版本已停止安装并恢复旧版本。\n"
+            "您可以继续使用当前版本，并稍后重新检查更新。",
+        )
     code = application.exec()
     logging.shutdown()
     return code

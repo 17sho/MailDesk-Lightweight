@@ -7,6 +7,7 @@ from collections import Counter
 from html import escape as html_escape
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from PySide6.QtCore import (
     QEasingCurve,
@@ -91,6 +92,7 @@ from mailbox_manager.gui.lazy_email_body_view import LazyEmailBodyView
 from mailbox_manager.gui.settings_dialog import EnterpriseSettingsDialog
 from mailbox_manager.gui.theme import DARK_THEME, LIGHT_THEME
 from mailbox_manager.gui.toast import BottomToast
+from mailbox_manager.gui.update_dialog import UpdateDialog, UpdateDialogState
 from mailbox_manager.gui.workers import (
     DiscoveryWorker,
     FetchWorker,
@@ -100,6 +102,8 @@ from mailbox_manager.gui.workers import (
     SendBatchWorker,
     SmtpProbeWorker,
     TranslationWorker,
+    UpdateCheckWorker,
+    UpdateDownloadWorker,
 )
 from mailbox_manager.importers.file_importer import import_file
 from mailbox_manager.importers.smart_parser import SmartAccountParser
@@ -135,6 +139,14 @@ from mailbox_manager.services.translation_service import (
     TranslationError,
     TranslationService,
     translation_language_label,
+)
+from mailbox_manager.services.update_service import (
+    InstallMode,
+    StagedUpdate,
+    UpdateError,
+    UpdateInfo,
+    UpdateSecurityError,
+    UpdateService,
 )
 from mailbox_manager.storage.enterprise_repositories import (
     AutomationRuleRepository,
@@ -202,6 +214,7 @@ class MainWindow(QMainWindow):
         eml_store: EmlStore | None = None,
         send_service: SendService | None = None,
         translation_service: TranslationService | None = None,
+        update_service: UpdateService | None = None,
     ) -> None:
         super().__init__()
         self.setObjectName("mainWindow")
@@ -223,6 +236,18 @@ class MainWindow(QMainWindow):
         self._audit_reports = audit_reports
         self._eml_store = eml_store
         self._send_service = send_service or SendService()
+        self._update_service = update_service
+        self._update_info: UpdateInfo | None = None
+        self._staged_update: StagedUpdate | None = None
+        self._update_dialog: UpdateDialog | None = None
+        self._update_check_worker: UpdateCheckWorker | None = None
+        self._update_install_check_worker: UpdateCheckWorker | None = None
+        self._update_download_worker: UpdateDownloadWorker | None = None
+        self._update_operation_id: str | None = None
+        self._update_download_identity: tuple[str, str, str, str, str] | None = None
+        self._update_check_manual = False
+        self._update_received_bytes = 0
+        self._update_total_bytes: int | None = None
         translation_values = (
             settings.get("enterprise_ui", {}) if settings is not None else {}
         )
@@ -332,6 +357,14 @@ class MainWindow(QMainWindow):
             self._schedule_timer.setInterval(30_000)
             self._schedule_timer.timeout.connect(self._run_due_schedules)
             self._schedule_timer.start()
+        if self._update_service is not None:
+            self._startup_update_timer = QTimer(self)
+            self._startup_update_timer.setSingleShot(True)
+            self._startup_update_timer.setInterval(1800)
+            self._startup_update_timer.timeout.connect(
+                lambda: self.check_for_updates(manual=False)
+            )
+            self._startup_update_timer.start()
 
     def _create_actions(self) -> None:
         self.add_account_action = QAction("添加邮箱", self)
@@ -370,6 +403,12 @@ class MainWindow(QMainWindow):
         self.log_action.setCheckable(True)
         self.log_action.setShortcut("Ctrl+L")
         self.log_action.triggered.connect(self._toggle_log_drawer)
+        self.check_updates_action = QAction("检查更新", self)
+        self.check_updates_action.setToolTip("立即检查 GitHub 正式发行版本")
+        self.check_updates_action.setEnabled(self._update_service is not None)
+        self.check_updates_action.triggered.connect(
+            lambda: self.check_for_updates(manual=True)
+        )
 
     def _create_toolbar(self) -> None:
         toolbar = QToolBar("主工具栏", self)
@@ -467,6 +506,20 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
 
+        self.update_tool_button = QToolButton()
+        self.update_tool_button.setObjectName("updateToolButton")
+        self.update_tool_button.setText("更新")
+        self.update_tool_button.setAccessibleName("查看可用更新")
+        self.update_tool_button.setToolTip("有新的 MailDesk 正式版本可用")
+        self.update_tool_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.update_tool_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_tool_button.clicked.connect(self._on_update_button_clicked)
+        self.update_toolbar_action = toolbar.addWidget(self.update_tool_button)
+        self.update_toolbar_action.setVisible(False)
+        self.update_tool_button.hide()
+
         self.concurrency_box = QWidget()
         self.concurrency_box.setObjectName("concurrencyBox")
         concurrency_layout = QHBoxLayout(self.concurrency_box)
@@ -519,6 +572,8 @@ class MainWindow(QMainWindow):
         tools_menu = QMenu(self.tools_menu_button)
         tools_menu.addAction(self.log_action)
         tools_menu.addSeparator()
+        tools_menu.addAction(self.check_updates_action)
+        tools_menu.addSeparator()
         tools_menu.addAction(self.reset_layout_action)
         tools_menu.addSeparator()
         tools_menu.addAction(self.audit_action)
@@ -550,8 +605,10 @@ class MainWindow(QMainWindow):
         self.theme_action.setIcon(line_icon("sun" if self._dark else "moon", neutral))
         self.settings_action.setIcon(line_icon("settings", neutral))
         self.audit_action.setIcon(line_icon("audit", neutral))
+        self.check_updates_action.setIcon(line_icon("refresh", neutral))
         self.import_menu_button.setIcon(line_icon("import", neutral))
         self.tools_menu_button.setIcon(line_icon("tools", neutral))
+        self.update_tool_button.setIcon(line_icon("sparkles", "#ffffff"))
 
     def _set_fetch_ui_state(self, state: str) -> None:
         if state == "running":
@@ -3023,6 +3080,465 @@ class MainWindow(QMainWindow):
     def enable_tray(self, tray: QSystemTrayIcon) -> None:
         self._tray = tray
 
+    def check_for_updates(self, *, manual: bool = True) -> None:
+        """Check the latest stable GitHub release on the shared worker pool."""
+
+        if self._update_service is None:
+            if manual:
+                QMessageBox.information(
+                    self,
+                    "检查更新",
+                    "当前运行方式没有配置在线更新服务。",
+                )
+            return
+        if self._update_download_worker is not None:
+            if manual:
+                self.statusBar().showMessage("更新正在后台下载，无需重复检查。", 4000)
+                self._show_update_dialog()
+            return
+        if self._update_check_worker is not None:
+            self._update_check_manual = self._update_check_manual or manual
+            if manual:
+                self.statusBar().showMessage("正在检查新版本…", 3000)
+            return
+
+        self._update_check_manual = manual
+        worker = UpdateCheckWorker(self._update_service)
+        self._update_check_worker = worker
+        worker.signals.result.connect(self._on_update_check_result)
+        worker.signals.finished.connect(self._on_update_check_finished)
+        self._pool.start(worker)
+        if manual:
+            self.statusBar().showMessage("正在检查新版本…")
+
+    def _on_update_check_result(self, update: object, error: object) -> None:
+        manual = self._update_check_manual
+        if error is not None:
+            logging.getLogger(__name__).warning("Update check failed: %s", error)
+            if manual:
+                message = (
+                    str(error)
+                    if isinstance(error, UpdateError)
+                    else "检查更新失败，请稍后重试。"
+                )
+                QMessageBox.warning(self, "检查更新失败", message)
+            return
+        if update is None:
+            if self._staged_update is None:
+                self._update_info = None
+                self.update_toolbar_action.setVisible(False)
+                self.update_tool_button.hide()
+            if manual:
+                version = (
+                    self._update_service.current_version
+                    if self._update_service is not None
+                    else "当前"
+                )
+                QMessageBox.information(
+                    self,
+                    "已是最新版本",
+                    f"MailDesk v{version} 已是最新正式版本。",
+                )
+            return
+        if not isinstance(update, UpdateInfo):
+            logging.getLogger(__name__).error("Update service returned an invalid result")
+            if manual:
+                QMessageBox.warning(self, "检查更新失败", "更新服务返回了无效结果。")
+            return
+
+        if self._update_download_worker is not None:
+            active_identity = self._update_download_identity
+            if active_identity is not None and self._update_identity(update) != active_identity:
+                logging.getLogger(__name__).info(
+                    "Ignored a newer update check while another release is downloading"
+                )
+            return
+
+        previous_staged = self._staged_update
+        self._update_info = update
+        if (
+            previous_staged is None
+            or previous_staged.update.release.version != update.release.version
+        ):
+            self._staged_update = None
+        skipped = (
+            self._settings.get("skipped_update_version", "")
+            if self._settings is not None
+            else ""
+        )
+        if str(skipped).strip().removeprefix("v") == update.release.version and not manual:
+            self.update_toolbar_action.setVisible(False)
+            self.update_tool_button.hide()
+            return
+
+        self._set_update_button_state("available")
+        self._show_update_dialog()
+
+    def _on_update_check_finished(self) -> None:
+        self._update_check_worker = None
+        self._update_check_manual = False
+        self.statusBar().showMessage("就绪", 2500)
+
+    def _show_update_dialog(self) -> None:
+        update = self._update_info
+        service = self._update_service
+        if update is None or service is None:
+            return
+        if self._update_dialog is None:
+            dialog = UpdateDialog(
+                service.current_version,
+                update.release.version,
+                update.release.notes,
+                self,
+            )
+            dialog.downloadRequested.connect(self._start_update_download)
+            dialog.skipVersionRequested.connect(self._skip_update_version)
+            dialog.installRequested.connect(self._confirm_update_install)
+            self._update_dialog = dialog
+        else:
+            dialog = self._update_dialog
+            if dialog.latest_version.removeprefix("v") != update.release.version:
+                dialog.set_release(
+                    service.current_version,
+                    update.release.version,
+                    update.release.notes,
+                )
+
+        if self._staged_update is not None:
+            dialog.set_download_complete()
+        elif self._update_download_worker is not None:
+            dialog.set_downloading()
+            self._apply_update_progress_to_dialog()
+        elif dialog.state is not UpdateDialogState.ERROR:
+            dialog.set_release(
+                service.current_version,
+                update.release.version,
+                update.release.notes,
+            )
+
+        if not update.install_supported:
+            dialog.primary_button.setText("打开发布页")
+            dialog.primary_button.setIcon(line_icon("export", "#ffffff", 18))
+        if self._update_install_check_worker is not None:
+            dialog.primary_button.setEnabled(False)
+            dialog.primary_button.setText("正在复核发布状态…")
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _on_update_button_clicked(self) -> None:
+        if self._update_info is None:
+            self.check_for_updates(manual=True)
+            return
+        self._show_update_dialog()
+
+    def _start_update_download(self, version: str) -> None:
+        service = self._update_service
+        update = self._update_info
+        if service is None or update is None:
+            return
+        if version.strip().removeprefix("v") != update.release.version:
+            logging.getLogger(__name__).warning(
+                "Ignored a download request for a stale update dialog"
+            )
+            return
+        if not update.install_supported or update.install_mode is InstallMode.SOURCE:
+            QDesktopServices.openUrl(QUrl(update.release.page_url))
+            if self._update_dialog is not None:
+                self._update_dialog.reject()
+            return
+        if self._update_download_worker is not None:
+            return
+
+        self._update_received_bytes = 0
+        self._update_total_bytes = update.asset.size if update.asset is not None else None
+        operation_id = uuid4().hex
+        self._update_operation_id = operation_id
+        self._update_download_identity = self._update_identity(update)
+        worker = UpdateDownloadWorker(service, update, operation_id)
+        self._update_download_worker = worker
+        worker.signals.progress.connect(self._on_update_download_progress)
+        worker.signals.status.connect(self._on_update_download_status)
+        worker.signals.result.connect(self._on_update_download_result)
+        worker.signals.finished.connect(self._on_update_download_finished)
+        if self._update_dialog is not None:
+            self._update_dialog.set_downloading()
+        self.check_updates_action.setEnabled(False)
+        self._set_update_button_state("downloading", 0)
+        self._pool.start(worker)
+
+    def _on_update_download_progress(
+        self, operation_id: str, received: int, total: object
+    ) -> None:
+        if operation_id != self._update_operation_id:
+            return
+        safe_total = total if isinstance(total, int) and total > 0 else None
+        self._update_received_bytes = max(0, received)
+        self._update_total_bytes = safe_total
+        percent = (
+            min(100, int(self._update_received_bytes * 100 / safe_total))
+            if safe_total
+            else None
+        )
+        self._set_update_button_state("downloading", percent)
+        self._apply_update_progress_to_dialog()
+
+    def _apply_update_progress_to_dialog(self) -> None:
+        if self._update_dialog is None:
+            return
+        total = self._update_total_bytes
+        percent = (
+            min(100, int(self._update_received_bytes * 100 / total))
+            if total
+            else None
+        )
+        self._update_dialog.set_download_progress(
+            percent,
+            received_bytes=self._update_received_bytes,
+            total_bytes=total,
+        )
+
+    def _on_update_download_status(self, operation_id: str, message: str) -> None:
+        if operation_id != self._update_operation_id:
+            return
+        self.statusBar().showMessage(message)
+        if self._update_dialog is not None:
+            self._update_dialog.set_download_status(message)
+
+    def _on_update_download_result(
+        self, operation_id: str, staged: object, error: object
+    ) -> None:
+        if operation_id != self._update_operation_id:
+            return
+        if error is not None:
+            logging.getLogger(__name__).warning("Update download failed: %s", error)
+            message = str(error) if isinstance(error, UpdateError) else "更新下载失败，请稍后重试。"
+            self._set_update_button_state("available")
+            if self._update_dialog is not None:
+                self._update_dialog.set_download_error(message)
+                self._update_dialog.show()
+                self._update_dialog.raise_()
+            return
+        if not isinstance(staged, StagedUpdate):
+            self._set_update_button_state("available")
+            if self._update_dialog is not None:
+                self._update_dialog.set_download_error("更新暂存结果无效，请重新下载。")
+            return
+        if self._update_identity(staged.update) != self._update_download_identity:
+            logging.getLogger(__name__).error(
+                "Rejected a staged update that does not match the active operation"
+            )
+            self._set_update_button_state("available")
+            if self._update_dialog is not None:
+                self._update_dialog.set_download_error(
+                    "更新包版本与当前任务不一致，已阻止安装。"
+                )
+            return
+
+        self._staged_update = staged
+        self._set_update_button_state("ready")
+        if self._update_dialog is not None:
+            self._update_dialog.set_download_complete()
+            self._update_dialog.show()
+            self._update_dialog.raise_()
+            self._update_dialog.activateWindow()
+        if self._tray is not None and self._tray.isVisible():
+            self._tray.showMessage(
+                "MailDesk 更新已就绪",
+                "新版已在后台下载并校验完成，可重启安装。",
+                QSystemTrayIcon.MessageIcon.Information,
+                6000,
+            )
+
+    def _on_update_download_finished(self, operation_id: str) -> None:
+        if operation_id != self._update_operation_id:
+            return
+        self._update_download_worker = None
+        self._update_operation_id = None
+        self.check_updates_action.setEnabled(self._update_service is not None)
+        if self._staged_update is None:
+            self.statusBar().showMessage("更新未完成", 5000)
+        else:
+            self.statusBar().showMessage("更新已准备就绪", 5000)
+
+    def _skip_update_version(self, version: str) -> None:
+        normalized = version.strip().removeprefix("v")
+        if self._settings is not None:
+            self._settings.set("skipped_update_version", normalized)
+        self.update_toolbar_action.setVisible(False)
+        self.update_tool_button.hide()
+        self.statusBar().showMessage(f"已跳过 v{normalized}", 5000)
+
+    def _confirm_update_install(self, version: str) -> None:
+        service = self._update_service
+        staged = self._staged_update
+        dialog = self._update_dialog
+        if service is None or staged is None:
+            if dialog is not None:
+                dialog.set_download_error("更新尚未准备完成，请重新下载。")
+            return
+        if (
+            version.strip().removeprefix("v") != staged.update.release.version
+            or self._update_identity(staged.update) != self._update_download_identity
+        ):
+            if dialog is not None:
+                dialog.set_download_error("更新版本状态已变化，请重新检查并下载。")
+            return
+        if self._update_install_check_worker is not None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "确认重启并安装",
+            "MailDesk 将关闭并安装已校验的新版本，随后自动重新启动。\n\n"
+            "请先确认当前编辑内容已经保存。是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer is not QMessageBox.StandardButton.Yes:
+            if dialog is not None:
+                dialog.set_download_complete()
+            return
+        worker = UpdateCheckWorker(service)
+        self._update_install_check_worker = worker
+        worker.signals.result.connect(self._on_update_install_revalidated)
+        worker.signals.finished.connect(self._on_update_install_check_finished)
+        self.check_updates_action.setEnabled(False)
+        if dialog is not None:
+            dialog.primary_button.setEnabled(False)
+            dialog.primary_button.setText("正在复核发布状态…")
+        self.statusBar().showMessage("正在复核更新签名与发布状态…")
+        self._pool.start(worker)
+
+    def _on_update_install_revalidated(self, update: object, error: object) -> None:
+        service = self._update_service
+        staged = self._staged_update
+        dialog = self._update_dialog
+        if service is None or staged is None:
+            return
+        if error is not None:
+            logging.getLogger(__name__).warning(
+                "Final update validation failed: %s",
+                error,
+            )
+            message = (
+                str(error)
+                if isinstance(error, UpdateError)
+                else "无法复核更新发布状态，请检查网络后重试。"
+            )
+            QMessageBox.warning(self, "暂不能安装更新", message)
+            if dialog is not None:
+                dialog.set_download_complete()
+            return
+        if update is None:
+            service.discard_staged_update(staged)
+            self._staged_update = None
+            self._update_info = None
+            self._update_download_identity = None
+            self.update_toolbar_action.setVisible(False)
+            self.update_tool_button.hide()
+            QMessageBox.warning(
+                self,
+                "更新已撤回",
+                "该版本已不再是官方最新正式版，已阻止安装并清理暂存文件。",
+            )
+            if dialog is not None:
+                dialog.reject()
+            return
+        if (
+            not isinstance(update, UpdateInfo)
+            or self._update_identity(update) != self._update_identity(staged.update)
+        ):
+            service.discard_staged_update(staged)
+            self._staged_update = None
+            self._update_download_identity = None
+            if isinstance(update, UpdateInfo):
+                self._update_info = update
+                self._set_update_button_state("available")
+                if dialog is not None:
+                    dialog.set_release(
+                        service.current_version,
+                        update.release.version,
+                        update.release.notes,
+                    )
+            else:
+                self._update_info = None
+                self.update_toolbar_action.setVisible(False)
+                self.update_tool_button.hide()
+            QMessageBox.warning(
+                self,
+                "版本状态已变化",
+                "官方发布内容已变化，旧暂存包已清理，请重新下载。",
+            )
+            return
+        self._launch_revalidated_update(service, staged, dialog)
+
+    def _launch_revalidated_update(
+        self,
+        service: UpdateService,
+        staged: StagedUpdate,
+        dialog: UpdateDialog | None,
+    ) -> None:
+        try:
+            plan = service.create_installer_plan(staged)
+            service.launch_installer(plan)
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Unable to start update installer")
+            message = str(exc) if isinstance(exc, UpdateError) else "无法启动更新安装程序。"
+            QMessageBox.warning(self, "无法安装更新", message)
+            if isinstance(exc, UpdateSecurityError):
+                service.discard_staged_update(staged)
+                self._staged_update = None
+                self._update_download_identity = None
+                self._set_update_button_state("available")
+                if dialog is not None:
+                    dialog.set_download_error(message)
+            elif dialog is not None:
+                dialog.set_download_complete()
+            return
+
+        if dialog is not None:
+            dialog.accept()
+        self.request_quit()
+
+    def _on_update_install_check_finished(self) -> None:
+        self._update_install_check_worker = None
+        if self.isVisible():
+            self.check_updates_action.setEnabled(self._update_service is not None)
+
+    def _set_update_button_state(
+        self, state: str, percent: int | None = None
+    ) -> None:
+        button = self.update_tool_button
+        button.setProperty("state", state)
+        if state == "ready":
+            button.setText("重启更新")
+            button.setIcon(line_icon("refresh", "#ffffff"))
+            button.setToolTip("更新已下载并校验完成，点击重启安装")
+        elif state == "downloading":
+            button.setText("下载中…" if percent is None else f"更新 {percent}%")
+            button.setIcon(line_icon("download", "#ffffff"))
+            button.setToolTip("更新正在后台下载，可继续使用 MailDesk")
+        else:
+            button.setText("更新")
+            button.setIcon(line_icon("sparkles", "#ffffff"))
+            button.setToolTip("有新的 MailDesk 正式版本可用")
+        self.update_toolbar_action.setVisible(True)
+        button.show()
+        button.style().unpolish(button)
+        button.style().polish(button)
+        button.updateGeometry()
+
+    @staticmethod
+    def _update_identity(update: UpdateInfo) -> tuple[str, str, str, str, str]:
+        asset = update.asset
+        return (
+            update.release.version,
+            update.install_mode.value,
+            asset.name if asset is not None else "",
+            (asset.digest or "") if asset is not None else "",
+            update.expected_sha256 or "",
+        )
+
     def restore_from_tray(self) -> None:
         self.showNormal()
         self.raise_()
@@ -3231,6 +3747,8 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self.stop_fetch()
+        if self._update_download_worker is not None:
+            self._update_download_worker.cancel()
         self._translation_generation += 1
         self._active_translation_generation = None
         self.message_body.shutdown()

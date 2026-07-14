@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import importlib.metadata
+import json
+import os
 import platform
 import re
 import shutil
@@ -11,9 +14,16 @@ import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 DEFAULT_OUTPUT = ROOT / "artifacts" / "releases"
+DEFAULT_REPOSITORY = "17sho/MailDesk"
+SIGNED_MANIFEST_ASSET_NAME = "MailDesk-update-manifest-v1.json"
+SIGNED_MANIFEST_SIGNATURE_NAME = "MailDesk-update-manifest-v1.sig"
+TRUSTED_UPDATE_PUBLIC_KEY_B64 = "ZGx6G4ac2jh9UG+/NIEKLKKYTM8MdNt52IfHuNoiRts="
 
 RUNTIME_DISTRIBUTIONS = (
     "PySide6",
@@ -67,6 +77,86 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def write_checksum_file(paths: tuple[Path, ...], target: Path) -> Path:
+    target.write_text(
+        "".join(f"{sha256_file(path)}  {path.name}\n" for path in paths),
+        encoding="utf-8",
+        newline="\n",
+    )
+    return target
+
+
+def build_signed_update_manifest(
+    archives: tuple[Path, ...],
+    *,
+    version: str,
+    signing_key: Path,
+    output: Path,
+    repository: str = DEFAULT_REPOSITORY,
+    expected_public_key: bytes | None = None,
+) -> tuple[Path, Path]:
+    """Create the canonical update manifest and its raw Ed25519 signature."""
+
+    expected_names = {
+        f"MailDesk-v{version}-windows-x64-onefile.zip",
+        f"MailDesk-v{version}-windows-x64-onedir.zip",
+    }
+    if {path.name for path in archives} != expected_names or any(
+        not path.is_file() for path in archives
+    ):
+        raise ValueError("签名清单必须包含当前版本的 onefile 与 onedir 压缩包")
+    try:
+        private_key = serialization.load_pem_private_key(
+            signing_key.read_bytes(),
+            password=None,
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError("无法读取 Ed25519 发布签名私钥") from exc
+    if not isinstance(private_key, Ed25519PrivateKey):
+        raise RuntimeError("发布签名私钥不是 Ed25519 密钥")
+    public_key = private_key.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    trusted_key = (
+        base64.b64decode(TRUSTED_UPDATE_PUBLIC_KEY_B64, validate=True)
+        if expected_public_key is None
+        else expected_public_key
+    )
+    if public_key != trusted_key:
+        raise RuntimeError("发布签名私钥与客户端内置公钥不匹配")
+
+    payload = {
+        "schema": 1,
+        "repository": repository,
+        "version": version,
+        "assets": {
+            path.name: {
+                "sha256": sha256_file(path),
+                "size": path.stat().st_size,
+            }
+            for path in sorted(archives, key=lambda item: item.name)
+        },
+    }
+    manifest_bytes = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    signature = private_key.sign(manifest_bytes)
+    output.mkdir(parents=True, exist_ok=True)
+    manifest_path = output / SIGNED_MANIFEST_ASSET_NAME
+    signature_path = output / SIGNED_MANIFEST_SIGNATURE_NAME
+    temporary_manifest = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
+    temporary_signature = signature_path.with_suffix(signature_path.suffix + ".tmp")
+    temporary_manifest.write_bytes(manifest_bytes)
+    temporary_signature.write_bytes(signature)
+    temporary_manifest.replace(manifest_path)
+    temporary_signature.replace(signature_path)
+    return manifest_path, signature_path
 
 
 def _is_license_file(path: PurePosixPath) -> bool:
@@ -213,14 +303,7 @@ def build_release_archives(
         _write_archive(onedir_zip, onedir_entries)
 
     checksum_file = output / "SHA256SUMS.txt"
-    checksum_file.write_text(
-        "".join(
-            f"{sha256_file(path)}  {path.name}\n"
-            for path in (onefile_zip, onedir_zip)
-        ),
-        encoding="utf-8",
-        newline="\n",
-    )
+    write_checksum_file((onefile_zip, onedir_zip), checksum_file)
     return onefile_zip, onedir_zip, checksum_file
 
 
@@ -230,14 +313,36 @@ def main() -> int:
     )
     parser.add_argument("--version", help="必须与 pyproject.toml 一致")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--signing-key",
+        type=Path,
+        default=(
+            Path(os.environ["MAILDESK_RELEASE_SIGNING_KEY"])
+            if os.environ.get("MAILDESK_RELEASE_SIGNING_KEY")
+            else None
+        ),
+        help="Ed25519 发布签名私钥 PEM；也可设置 MAILDESK_RELEASE_SIGNING_KEY",
+    )
     arguments = parser.parse_args()
     detected = project_version()
     if arguments.version and arguments.version != detected:
         parser.error(f"--version {arguments.version} 与项目版本 {detected} 不一致")
-    archives = build_release_archives(
+    if arguments.signing_key is None:
+        parser.error("必须通过 --signing-key 提供离线 Ed25519 发布签名私钥")
+    onefile_zip, onedir_zip, checksum_file = build_release_archives(
         output=arguments.output, version=arguments.version or detected
     )
-    for path in archives:
+    manifest, signature = build_signed_update_manifest(
+        (onefile_zip, onedir_zip),
+        version=arguments.version or detected,
+        signing_key=arguments.signing_key,
+        output=arguments.output,
+    )
+    write_checksum_file(
+        (onefile_zip, onedir_zip, manifest, signature),
+        checksum_file,
+    )
+    for path in (onefile_zip, onedir_zip, manifest, signature, checksum_file):
         print(f"发布文件：{path}")
     return 0
 

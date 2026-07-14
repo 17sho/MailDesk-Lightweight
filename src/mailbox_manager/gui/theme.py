@@ -62,6 +62,29 @@ QToolButton#addAccountToolButton:hover {
     background: #dbeafe;
     border-color: #93c5fd;
 }
+QToolButton#updateToolButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                stop:0 #2563eb, stop:1 #06b6d4);
+    color: #ffffff;
+    border: 1px solid #38bdf8;
+    border-radius: 9px;
+    padding: 7px 13px;
+    font-weight: 700;
+}
+QToolButton#updateToolButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                stop:0 #1d4ed8, stop:1 #0891b2);
+    border-color: #0ea5e9;
+}
+QToolButton#updateToolButton:pressed { background: #1d4ed8; }
+QToolButton#updateToolButton[state="downloading"] {
+    background: #2563eb;
+    border-color: #60a5fa;
+}
+QToolButton#updateToolButton[state="ready"] {
+    background: #059669;
+    border-color: #34d399;
+}
 QToolButton#dangerToolButton {
     background: #ffffff;
     color: #dc2626;
@@ -858,6 +881,90 @@ QTextEdit#composeBody {
 }
 QTextEdit#composeBody:focus { border: 1px solid #3b82f6; }
 
+QDialog#updateDialog { background: transparent; }
+QFrame#updateCard {
+    background: #ffffff;
+    border: 1px solid #dbe3ee;
+    border-radius: 18px;
+}
+QFrame#updateHeader {
+    background: #ffffff;
+    border: 0;
+    border-bottom: 1px solid #e6ebf2;
+    border-top-left-radius: 18px;
+    border-top-right-radius: 18px;
+}
+QWidget#updateContent { background: #ffffff; }
+QFrame#updateFooter {
+    background: #f7f9fc;
+    border: 0;
+    border-top: 1px solid #e2e8f0;
+    border-bottom-left-radius: 18px;
+    border-bottom-right-radius: 18px;
+}
+QLabel#updateHeaderIcon {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                stop:0 #2563eb, stop:1 #0ea5a8);
+    border-radius: 12px;
+}
+QLabel#updateTitle { color: #111827; font-size: 21px; font-weight: 750; }
+QLabel#updateHeaderSubtitle { color: #8793a7; font-size: 11px; }
+QToolButton#updateCloseButton {
+    background: transparent;
+    color: #64748b;
+    border: 0;
+    border-radius: 9px;
+    padding: 0;
+    font-size: 24px;
+    font-weight: 400;
+}
+QToolButton#updateCloseButton:hover { background: #f1f5f9; color: #334155; }
+QLabel#updateVersionBadge {
+    background: #eef4ff;
+    color: #2563eb;
+    border: 1px solid #d6e4ff;
+    border-radius: 9px;
+    padding: 2px 10px;
+    font-size: 13px;
+    font-weight: 700;
+}
+QLabel#updateSummary { color: #526176; font-size: 13px; padding: 2px 0 4px 0; }
+QFrame#updateSeparator { color: #e5eaf1; background: #e5eaf1; border: 0; max-height: 1px; }
+QLabel#updateSectionTitle { color: #172033; font-size: 14px; font-weight: 700; }
+QTextBrowser#updateReleaseNotes {
+    background: #fbfcfe;
+    color: #3d4b60;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 4px;
+    selection-background-color: #bfdbfe;
+}
+QFrame#updateProgressPanel {
+    background: #f5f8fc;
+    border: 1px solid #dfe7f1;
+    border-radius: 10px;
+}
+QLabel#updateProgressStatus { color: #334155; font-size: 12px; font-weight: 650; }
+QLabel#updateProgressPercent { color: #2563eb; font-size: 12px; font-weight: 700; }
+QLabel#updateProgressDetail { color: #718096; font-size: 11px; }
+QProgressBar#updateProgressBar {
+    background: #dfe7f1;
+    border: 0;
+    border-radius: 4px;
+    min-height: 8px;
+    max-height: 8px;
+}
+QProgressBar#updateProgressBar::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                stop:0 #2563eb, stop:1 #14b8a6);
+    border-radius: 4px;
+}
+QFrame#updateCard[state="ready"] QLabel#updateProgressStatus { color: #047857; }
+QFrame#updateCard[state="error"] QLabel#updateProgressStatus,
+QFrame#updateCard[state="error"] QLabel#updateProgressPercent { color: #dc2626; }
+QDialog#updateDialog QPushButton#secondaryButton { min-width: 88px; padding: 8px 15px; }
+QDialog#updateDialog QPushButton#primaryButton { min-width: 126px; padding: 9px 20px; }
+
 QSplitter::handle:horizontal {
     background: #dce3ec;
     margin: 0 2px;
@@ -1017,6 +1124,29 @@ QToolButton#addAccountToolButton {
 QToolButton#addAccountToolButton:hover {
     background: #1d3b68;
     border-color: #3f6797;
+}
+QToolButton#updateToolButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                stop:0 #3b82f6, stop:1 #0891b2);
+    color: #ffffff;
+    border: 1px solid #38bdf8;
+    border-radius: 9px;
+    padding: 7px 13px;
+    font-weight: 700;
+}
+QToolButton#updateToolButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                stop:0 #2563eb, stop:1 #0e7490);
+    border-color: #67e8f9;
+}
+QToolButton#updateToolButton:pressed { background: #2563eb; }
+QToolButton#updateToolButton[state="downloading"] {
+    background: #2563eb;
+    border-color: #60a5fa;
+}
+QToolButton#updateToolButton[state="ready"] {
+    background: #047857;
+    border-color: #34d399;
 }
 QToolButton#dangerToolButton {
     background: #251923;
@@ -1777,6 +1907,90 @@ QTextEdit#composeBody {
     padding: 10px;
 }
 QTextEdit#composeBody:focus { border: 1px solid #3b82f6; }
+
+QDialog#updateDialog { background: transparent; }
+QFrame#updateCard {
+    background: #111925;
+    border: 1px solid #2b374a;
+    border-radius: 18px;
+}
+QFrame#updateHeader {
+    background: #151d2a;
+    border: 0;
+    border-bottom: 1px solid #2b374a;
+    border-top-left-radius: 18px;
+    border-top-right-radius: 18px;
+}
+QWidget#updateContent { background: #111925; }
+QFrame#updateFooter {
+    background: #151d2a;
+    border: 0;
+    border-top: 1px solid #2b374a;
+    border-bottom-left-radius: 18px;
+    border-bottom-right-radius: 18px;
+}
+QLabel#updateHeaderIcon {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                stop:0 #3b82f6, stop:1 #0f9fa5);
+    border-radius: 12px;
+}
+QLabel#updateTitle { color: #f8fafc; font-size: 21px; font-weight: 750; }
+QLabel#updateHeaderSubtitle { color: #78869b; font-size: 11px; }
+QToolButton#updateCloseButton {
+    background: transparent;
+    color: #8c99ad;
+    border: 0;
+    border-radius: 9px;
+    padding: 0;
+    font-size: 24px;
+    font-weight: 400;
+}
+QToolButton#updateCloseButton:hover { background: #202b3b; color: #e5eaf2; }
+QLabel#updateVersionBadge {
+    background: #172f54;
+    color: #93c5fd;
+    border: 1px solid #244c80;
+    border-radius: 9px;
+    padding: 2px 10px;
+    font-size: 13px;
+    font-weight: 700;
+}
+QLabel#updateSummary { color: #a1adbf; font-size: 13px; padding: 2px 0 4px 0; }
+QFrame#updateSeparator { color: #2b374a; background: #2b374a; border: 0; max-height: 1px; }
+QLabel#updateSectionTitle { color: #e5eaf2; font-size: 14px; font-weight: 700; }
+QTextBrowser#updateReleaseNotes {
+    background: #0f1621;
+    color: #c0c9d6;
+    border: 1px solid #2b374a;
+    border-radius: 10px;
+    padding: 4px;
+    selection-background-color: #244c80;
+}
+QFrame#updateProgressPanel {
+    background: #141e2d;
+    border: 1px solid #2b3a50;
+    border-radius: 10px;
+}
+QLabel#updateProgressStatus { color: #d5dce7; font-size: 12px; font-weight: 650; }
+QLabel#updateProgressPercent { color: #60a5fa; font-size: 12px; font-weight: 700; }
+QLabel#updateProgressDetail { color: #8491a5; font-size: 11px; }
+QProgressBar#updateProgressBar {
+    background: #2a3648;
+    border: 0;
+    border-radius: 4px;
+    min-height: 8px;
+    max-height: 8px;
+}
+QProgressBar#updateProgressBar::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                stop:0 #3b82f6, stop:1 #14b8a6);
+    border-radius: 4px;
+}
+QFrame#updateCard[state="ready"] QLabel#updateProgressStatus { color: #6ee7b7; }
+QFrame#updateCard[state="error"] QLabel#updateProgressStatus,
+QFrame#updateCard[state="error"] QLabel#updateProgressPercent { color: #f87171; }
+QDialog#updateDialog QPushButton#secondaryButton { min-width: 88px; padding: 8px 15px; }
+QDialog#updateDialog QPushButton#primaryButton { min-width: 126px; padding: 9px 20px; }
 
 QSplitter::handle:horizontal {
     background: #2d3a4e;
