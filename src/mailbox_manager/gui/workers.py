@@ -1,0 +1,270 @@
+from __future__ import annotations
+
+import threading
+
+from PySide6.QtCore import QObject, QRunnable, Signal, Slot
+
+from mailbox_manager.domain.models import EmailAccount, FetchRequest
+from mailbox_manager.domain.status import AccountStatus
+from mailbox_manager.mail.remote_images import load_remote_images_for_web
+from mailbox_manager.protocols.oauth import OAuthTokenProvider
+from mailbox_manager.protocols.smtp_client import SmtpClient
+from mailbox_manager.services.discovery_service import DiscoveryService
+from mailbox_manager.services.fetch_service import FetchService
+from mailbox_manager.services.security_audit import GraphSecurityAuditService
+from mailbox_manager.services.security_authorization import GraphDeviceAuthorizationService
+from mailbox_manager.services.send_service import OutgoingDraft, SendService
+from mailbox_manager.services.translation_service import TranslationService
+
+
+class FetchWorkerSignals(QObject):
+    status = Signal(int, object, str)
+    result = Signal(int, object)
+    finished = Signal(int)
+
+
+class FetchWorker(QRunnable):
+    def __init__(
+        self,
+        service: FetchService,
+        account: EmailAccount,
+        request: FetchRequest,
+        stop_event: threading.Event,
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.account = account
+        self.request = request
+        self.stop_event = stop_event
+        self.signals = FetchWorkerSignals()
+
+    @Slot()
+    def run(self) -> None:
+        account_id = self.account.account_id or 0
+        if self.stop_event.is_set():
+            self.signals.status.emit(account_id, AccountStatus.CANCELLED, "任务已停止")
+            self.signals.finished.emit(account_id)
+            return
+        self.signals.status.emit(account_id, AccountStatus.CONNECTING, "正在连接")
+        try:
+            result = self.service.fetch_account(self.account, self.request)
+            self.signals.result.emit(account_id, result)
+            self.signals.status.emit(account_id, result.status, result.detail)
+        except Exception:
+            self.signals.status.emit(account_id, AccountStatus.UNKNOWN_ERROR, "收件任务异常")
+        finally:
+            self.signals.finished.emit(account_id)
+
+
+class SmtpProbeSignals(QObject):
+    result = Signal(int, object, str)
+    finished = Signal(int)
+
+
+class SmtpProbeWorker(QRunnable):
+    def __init__(self, account: EmailAccount) -> None:
+        super().__init__()
+        self.account = account
+        self.signals = SmtpProbeSignals()
+
+    @Slot()
+    def run(self) -> None:
+        account_id = self.account.account_id or 0
+        token = ""
+        provider = None
+        client = None
+        try:
+            if self.account.refresh_token and self.account.client_id:
+                provider = OAuthTokenProvider()
+                token = provider.access_token(self.account)
+            client = SmtpClient(self.account, oauth_access_token=token)
+            probe_id = client.send_probe(
+                self.account.email, confirmed_owned_target=True
+            )
+            self.signals.result.emit(
+                account_id, AccountStatus.SUCCESS, f"SMTP 探测邮件已发送：{probe_id}"
+            )
+        except Exception:
+            self.signals.result.emit(
+                account_id, AccountStatus.NETWORK_ERROR, "SMTP 探测失败，请检查配置和权限"
+            )
+        finally:
+            if client is not None:
+                client.close()
+            if provider is not None:
+                provider.close()
+            self.signals.finished.emit(account_id)
+
+
+class DiscoverySignals(QObject):
+    result = Signal(int, object)
+    finished = Signal(int)
+
+
+class DiscoveryWorker(QRunnable):
+    def __init__(self, account: EmailAccount) -> None:
+        super().__init__()
+        self.account = account
+        self.signals = DiscoverySignals()
+
+    @Slot()
+    def run(self) -> None:
+        account_id = self.account.account_id or 0
+        try:
+            result = DiscoveryService().discover(self.account.email, self.account.secret)
+            self.signals.result.emit(account_id, result)
+        except Exception:
+            self.signals.result.emit(account_id, None)
+        finally:
+            self.signals.finished.emit(account_id)
+
+
+class SecurityAuditSignals(QObject):
+    result = Signal(int, object, object)
+    finished = Signal(int)
+
+
+class SecurityAuditWorker(QRunnable):
+    def __init__(self, account: EmailAccount) -> None:
+        super().__init__()
+        self.account = account
+        self.signals = SecurityAuditSignals()
+
+    @Slot()
+    def run(self) -> None:
+        account_id = self.account.account_id or 0
+        service = GraphSecurityAuditService(self.account)
+        try:
+            findings = service.audit_forwarding_rules()
+            self.signals.result.emit(account_id, findings, None)
+        except Exception as exc:
+            self.signals.result.emit(account_id, [], exc)
+        finally:
+            service.close()
+            self.signals.finished.emit(account_id)
+
+
+class SecurityConsentSignals(QObject):
+    challenge = Signal(int, object)
+    result = Signal(int, str, object)
+    finished = Signal(int)
+
+
+class SecurityConsentWorker(QRunnable):
+    def __init__(self, account: EmailAccount) -> None:
+        super().__init__()
+        self.account = account
+        self.signals = SecurityConsentSignals()
+        self._cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+
+    @Slot()
+    def run(self) -> None:
+        account_id = self.account.account_id or 0
+        service = GraphDeviceAuthorizationService()
+        try:
+            challenge = service.request_challenge(self.account)
+            self.signals.challenge.emit(account_id, challenge)
+            refresh_token = service.wait_for_refresh_token(
+                self.account,
+                challenge,
+                cancelled=self._cancelled.is_set,
+            )
+            self.signals.result.emit(account_id, refresh_token, None)
+        except Exception as exc:
+            self.signals.result.emit(account_id, "", exc)
+        finally:
+            service.close()
+            self.signals.finished.emit(account_id)
+
+
+class RemoteImageSignals(QObject):
+    result = Signal(int, str, int, int)
+    finished = Signal(int)
+
+
+class RemoteImageWorker(QRunnable):
+    def __init__(self, generation: int, html_body: str) -> None:
+        super().__init__()
+        self.generation = generation
+        self.html_body = html_body
+        self.signals = RemoteImageSignals()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            rendered, loaded, total = load_remote_images_for_web(self.html_body)
+            self.signals.result.emit(self.generation, rendered, loaded, total)
+        except Exception:
+            self.signals.result.emit(self.generation, "", 0, 0)
+        finally:
+            self.signals.finished.emit(self.generation)
+
+
+class TranslationSignals(QObject):
+    result = Signal(int, str, object)
+    finished = Signal(int)
+
+
+class TranslationWorker(QRunnable):
+    def __init__(
+        self,
+        generation: int,
+        text: str,
+        target_language: str,
+        service: TranslationService,
+    ) -> None:
+        super().__init__()
+        self.generation = generation
+        self.text = text
+        self.target_language = target_language
+        self.service = service
+        self.signals = TranslationSignals()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            translated = self.service.translate(
+                self.text,
+                target_language=self.target_language,
+            )
+            self.signals.result.emit(self.generation, translated, None)
+        except Exception as exc:
+            self.signals.result.emit(self.generation, "", exc)
+        finally:
+            self.signals.finished.emit(self.generation)
+
+
+class SendBatchSignals(QObject):
+    result = Signal(object, object)
+    finished = Signal()
+
+
+class SendBatchWorker(QRunnable):
+    def __init__(
+        self,
+        service: SendService,
+        accounts: list[EmailAccount],
+        draft: OutgoingDraft,
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.accounts = accounts
+        self.draft = draft
+        self.signals = SendBatchSignals()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            result = self.service.send_batch(
+                self.accounts,
+                self.draft,
+                confirmed=True,
+            )
+            self.signals.result.emit(result, None)
+        except Exception as exc:
+            self.signals.result.emit(None, exc)
+        finally:
+            self.signals.finished.emit()

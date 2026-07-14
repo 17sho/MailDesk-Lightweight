@@ -1,0 +1,370 @@
+# MailDesk
+
+<div align="center">
+
+**面向 Windows 的本地多邮箱管理工作台**
+
+[![Version](https://img.shields.io/badge/version-0.2.0-2563eb.svg)](https://github.com/17sho/MailDesk/releases)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4.svg?logo=windows11&logoColor=white)](https://github.com/17sho/MailDesk)
+[![GUI](https://img.shields.io/badge/GUI-PySide6-41cd52.svg?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
+[![CI](https://github.com/17sho/MailDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/17sho/MailDesk/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-f5c518.svg)](LICENSE)
+
+[功能](#功能矩阵) · [快速开始](#快速开始) · [导入格式](#账号导入格式) · [安全](#数据安全) · [构建](#构建-windows-exe) · [贡献](#贡献)
+
+</div>
+
+MailDesk 是使用 Python 3.12 与 PySide6 编写的 Windows 桌面应用，用于集中管理用户本人拥有或已获得明确授权的邮箱。它将账号导入、协议连接、并发收件、本地检索、邮件阅读、内容提取、发件、分组调度与审计集中在一个本地工作台中。
+
+当前仓库版本为 **0.2.0**。应用数据默认保存在当前 Windows 用户的 `%LOCALAPPDATA%\MailDesk` 中；密码、应用专用密码、Refresh Token、TOTP 密钥等凭据字段使用 Windows DPAPI 与 Fernet 进行本机绑定加密。
+
+> [!IMPORTANT]
+> MailDesk 仅适用于合法、获授权的邮箱管理与自动化场景。项目不提供验证码绕过、封禁规避、隐藏式网页登录、批量修改密码/恢复邮箱、规避 Rate Limit 或其他绕过服务商安全控制的能力。使用者必须遵守邮箱服务商条款、组织安全政策与适用法律。
+
+## 界面预览
+
+![MailDesk 工作台概览](docs/images/overview.png)
+
+<details>
+<summary>查看账号与邮件界面</summary>
+
+![MailDesk 账号与邮件](docs/images/accounts.png)
+
+</details>
+
+截图使用 `example.org` / `example.net` 虚构账号和演示邮件生成，不包含真实凭据或私人邮件。
+
+## 功能矩阵
+
+以下矩阵以 v0.2.0 当前代码为准。
+
+| 模块 | 支持情况 | 说明 |
+|---|---:|---|
+| 账号导入 | ✅ | TXT、CSV、JSON、文件拖放与任意文本粘贴；导入前提供字段映射/识别预览、校验与去重 |
+| 账号管理 | ✅ | 多选、批量删除、状态筛选、搜索、多层分组、标签与状态着色 |
+| 凭据存储 | ✅ | SQLite 持久化；敏感字段使用 DPAPI 保护的随机 Fernet 主密钥加密 |
+| 通用收件 | ✅ | IMAP、POP3，支持 SSL、STARTTLS、自定义主机和端口 |
+| OAuth2 收件 | ✅ | Microsoft Graph；Microsoft/Google Refresh Token + Client ID 换取 Access Token 后使用 Graph 或 XOAUTH2 IMAP |
+| 批量取件 | ✅ | `QThreadPool` 并发、1–50 并发配置、协作式停止、统一连接状态与错误分类 |
+| 单账号取件 | ✅ | 可对指定账号立即收取，不必刷新全部账号 |
+| 文件夹扫描 | ✅ | 指定文件夹及 Junk/Spam/Trash 等特殊文件夹识别与合并收取 |
+| 邮件解析 | ✅ | MIME multipart、常见字符集、纯文本/HTML、内嵌资源、附件、远程图片控制与 EML 原件 |
+| 内容提取 | ✅ | 4–8 位验证码、关键词、自定义正则，以及 `To` / `X-Original-To` Catch-All 收件地址 |
+| 搜索与导出 | ✅ | 当前账号或全部本地邮件搜索；按自定义文本/链接模式筛选并复制或导出；账号状态 CSV/TXT |
+| 邮件阅读器 | ✅ | HTML 正文、附件保存、链接复制、远程图片授权加载、按需正文翻译 |
+| 邮件发送 | ✅ | SMTP 或 Microsoft Graph；单账号/多账号发件、To/CC/BCC、文本/HTML 正文与附件；批量发件要求显式确认 |
+| 邮件后处理 | ✅ | 匹配后标记已读、移动或删除；有副作用的操作必须由用户显式启用并确认 |
+| 自动化连接 | ✅ | HTTPS Webhook、HMAC-SHA256 签名、规则匹配、用户确认后的 EML 转发 |
+| 调度与托盘 | ✅ | 按分组定时收件、系统托盘驻留与新邮件通知 |
+| 工作台 | ✅ | 账号健康度、邮件趋势、异常账号入口、代理开关与可配置快捷操作 |
+| 审计与诊断 | ✅ | 脱敏日志、审计事件与 ZIP 排查报告；Outlook 转发/重定向规则只读检查 |
+| Windows 打包 | ✅ | PyInstaller `onedir` 与 `onefile`，包含应用图标和所需 Qt/Windows 运行时收集逻辑 |
+
+## 支持的协议与服务商
+
+### 协议与认证方式
+
+| 协议/方式 | 用途 | 认证说明 |
+|---|---|---|
+| IMAP | 收件、文件夹读取、邮件后处理 | 密码/授权码/应用专用密码，或 Microsoft/Google XOAUTH2 |
+| POP3 | 基础收件 | 密码、授权码或应用专用密码；不提供 IMAP 文件夹语义 |
+| SMTP | 发件、权限自检、确认后的转发 | 密码/授权码/应用专用密码，或 Microsoft/Google OAuth2 |
+| Microsoft Graph | Outlook / Microsoft 365 收件、附件、发件与邮件动作 | 用户提供合法取得的 Client ID、Refresh Token 与 tenant；权限由原授权决定 |
+
+通用 IMAP/POP3/SMTP 可以配置 SSL 或 STARTTLS。代码模型也保留明文连接兼容项，但不建议在不受信网络中使用未加密连接。
+
+### 内置服务商配置
+
+| 服务商/域名 | 自动补全 | 推荐凭据 |
+|---|---:|---|
+| QQ 邮箱、Foxmail | ✅ | 邮箱授权码 |
+| 163、126、Yeah、88 邮箱 | ✅ | 客户端授权码 |
+| 新浪邮箱 | ✅ | 服务商允许的客户端授权凭据 |
+| Gmail / Google Workspace | ✅ | 应用专用密码，或 Google OAuth2 Client ID + Refresh Token |
+| Outlook、Hotmail、Live、Microsoft 365 | ✅ | Microsoft OAuth2 Client ID + Refresh Token；可选择 Graph 或 OAuth2 IMAP |
+| 企业邮箱、自建域名邮箱 | 手动/受限探测 | 自定义 IMAP/POP3/SMTP 主机、端口和加密方式 |
+
+服务商可能要求先开启 IMAP/POP3/SMTP、启用两步验证、创建应用专用密码，或由组织管理员授予 OAuth 权限。MailDesk 不会替用户绕过这些设置，也不负责签发 Refresh Token。
+
+自定义域名探测必须由用户显式启动，仅尝试 `imap.<domain>`、`mail.<domain>` 与常见 993/143 组合；它不是完整的 MX/SRV 自动发现。
+
+## 快速开始
+
+### 环境要求
+
+- Windows 10 或 Windows 11
+- Python 3.12 或更高的兼容 3.12 版本
+- 可访问目标邮箱官方服务器的网络
+- 对相关邮箱和 OAuth 应用具有合法管理权限
+
+### 1. 获取代码
+
+```powershell
+git clone https://github.com/17sho/MailDesk.git
+cd MailDesk
+```
+
+### 2. 创建虚拟环境并安装
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e .
+```
+
+如需运行测试、代码检查或构建 EXE，再安装开发依赖：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+```
+
+### 3. 启动应用
+
+```powershell
+.\.venv\Scripts\python.exe -m mailbox_manager
+```
+
+也可以在已激活虚拟环境后运行入口命令：
+
+```powershell
+maildesk
+```
+
+### 4. 基本使用流程
+
+1. 在“添加邮箱”中选择服务商和认证方式，或打开“批量导入”。
+2. 在导入预览中核对协议、服务器、端口和认证字段；只勾选确认无误的记录。
+3. 在账号列表中勾选账号，执行单账号取件或批量取件。
+4. 在邮件列表中阅读正文、查看附件、搜索邮件或提取验证码/关键词。
+5. 按需在“系统设置”中配置文件夹、收取数量、代理、调度、翻译和自动化规则。
+
+## 账号导入格式
+
+导入文件最大 20 MiB，文本最多 100,000 行。支持 UTF-8、UTF-8 BOM，并兼容读取 GB18030。示例文件见 [`examples/accounts.txt`](examples/accounts.txt)。
+
+### TXT 与粘贴文本
+
+字段分隔格式支持：
+
+```text
+账号----密码或授权码----IMAP服务器----端口
+账号----主密码占位----授权码或应用专用密码
+账号----RefreshToken----ClientID
+账号----密码占位----ClientID----RefreshToken
+账号----密码或授权码----IMAP服务器----端口----TOTP密钥
+```
+
+示例：
+
+```text
+owner@example.org----APP_PASSWORD----imap.example.org----993
+user@qq.com----IGNORED_MAIN_PASSWORD----AUTHORIZATION_CODE
+owner@outlook.com----REFRESH_TOKEN----00000000-0000-0000-0000-000000000001
+user@gmail.com----GOOGLE_REFRESH_TOKEN----123456789.apps.googleusercontent.com
+```
+
+- Microsoft Client ID 识别为 UUID；Google Client ID 识别为 `*.apps.googleusercontent.com`。
+- OAuth 行会从 Client ID 相邻字段中识别 Refresh Token；带有密码占位的 OAuth 行不会保存该密码字段。
+- 常见服务商的三字段格式优先使用第三字段作为授权码/应用专用密码。
+- 任意文本模式会启发式识别邮箱及相邻凭据，所有结果仍须在预览页人工确认。
+- 文本中发现代理只会给出提示；代理必须在代理设置中单独确认导入。
+
+### CSV
+
+CSV 支持逗号、分号、Tab 或竖线分隔，可使用中英文表头。常见字段包括：
+
+```text
+email / account / 账号 / 邮箱
+password / secret / 授权码 / 应用专用密码
+host / imap_server / 服务器
+port / 端口
+protocol / 协议
+security / 加密方式
+refresh_token / client_id / tenant / oauth_provider
+smtp_host / smtp_port / smtp_security
+totp_secret
+```
+
+无表头 CSV 会按位置转换为与 TXT 相同的字段顺序后解析。
+
+### JSON
+
+接受账号对象数组，或包含 `accounts` 数组的对象：
+
+```json
+{
+  "accounts": [
+    {
+      "email": "owner@example.org",
+      "password": "APP_PASSWORD",
+      "protocol": "imap",
+      "host": "imap.example.org",
+      "port": 993,
+      "security": "ssl",
+      "smtp_host": "smtp.example.org",
+      "smtp_port": 465,
+      "smtp_security": "ssl"
+    }
+  ]
+}
+```
+
+重新导入已存在账号时，变更后的连接配置会更新原记录，并保留其分组、标签和已收取邮件。
+
+## 本地数据目录
+
+首次运行会创建：
+
+```text
+%LOCALAPPDATA%\MailDesk\
+├─ maildesk.db          # SQLite：账号、配置、邮件、附件、审计等
+├─ master.key.dpapi     # 当前 Windows 用户 DPAPI 保护的随机主密钥
+├─ logs\app.log         # 滚动、脱敏应用日志
+└─ eml\                 # 按账号隔离保存的邮件原件
+```
+
+不要只复制 `maildesk.db` 或 `master.key.dpapi` 到其他电脑。DPAPI 与创建密钥的 Windows 用户绑定，迁移后通常无法解密凭据。迁移前应使用应用提供的非敏感导出，并在目标设备重新录入凭据。
+
+## 数据安全
+
+- **字段级加密**：密码、授权码、Refresh Token、TOTP 密钥、代理密码和 Webhook 密钥等敏感字段以密文写入 SQLite。
+- **本机密钥保护**：Fernet 使用随机 32 字节主密钥；主密钥再由当前 Windows 用户的 DPAPI 保护。
+- **最小暴露**：Access Token 仅在协议客户端内存中使用，不写入导出文件或正常日志。
+- **安全导出**：账号导出不包含密码或 Token，并对可能触发电子表格公式的 CSV 单元格进行转义。
+- **日志脱敏**：取件、发件与诊断日志使用账号标识和结果分类，不应记录完整凭据。
+- **Webhook 限制**：仅允许 HTTPS 和允许列表主机；阻止私网、回环及保留地址，禁止重定向，可选 HMAC-SHA256 签名。
+- **远程内容控制**：阅读器对远程图片采用显式加载/配置控制，降低邮件跟踪像素和未知外部请求风险。
+- **副作用确认**：删除、移动、自动转发和批量发件等操作要求用户显式配置或确认。
+
+DPAPI/Fernet 保护的是**凭据字段**，不是整个数据库。已收取的邮件正文、附件和一般元数据需要在本地展示与检索，因此不应视为全盘加密数据。建议启用 BitLocker、Windows 账户保护与可靠的设备锁屏，并妥善控制 `%LOCALAPPDATA%\MailDesk` 的访问权限。
+
+邮件翻译是按需功能。触发翻译时，当前邮件正文会发送给界面标明的第三方翻译服务；账号密码、Refresh Token、附件和账号配置不会作为翻译负载发送。处理敏感邮件前请先评估组织的数据出境与隐私要求。
+
+## 代理路由与合规节流
+
+支持批量导入 HTTP 或 SOCKS5 代理：
+
+```text
+IP:Port
+IP:Port:User:Pass
+```
+
+单次最多导入 10,000 条。代理用户名和密码必须成对提供，代理密码使用本机凭据密钥加密。
+
+取件路由优先级固定如下：
+
+1. **账号固定代理优先**：账号绑定的代理必须存在且处于启用状态；否则该账号任务失败，不会静默回退到本地网络。
+2. **全局代理池**：账号未绑定固定代理且全局代理取件已开启时，在已启用代理中轮询选择一个路由。
+3. **本地直连**：全局代理开关关闭，或全局开启但当前没有可用代理时，未绑定代理的账号使用本地网络。
+
+当前代理路由覆盖 IMAP、POP3、Microsoft Graph 及收件所需的 OAuth Token 交换。不要假定 SMTP 发件一定经过上述取件代理路由。
+
+节流按真实网络身份分别执行，可配置每个身份的最大并发数与账号启动随机间隔。该机制用于控制负载、减少误操作并尊重服务商限制；全局代理轮询不是规避风控或隐藏批量登录来源的工具。遇到 `429`、封禁或服务商限制时，应停止任务并按官方流程处理。
+
+## 测试与代码检查
+
+安装 `requirements-dev.txt` 后，在仓库根目录运行：
+
+```powershell
+$env:QT_QPA_PLATFORM = "offscreen"
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check src tests build.py
+```
+
+测试覆盖导入、加密仓储、协议错误分类、Graph/IMAP/POP3/SMTP、代理路由、取件/发件服务、Webhook、自动化、邮件解析、GUI 交互和构建脚本。测试使用临时数据库、协议替身与 HTTP Mock Transport，不需要在测试代码中放入真实邮箱凭据。
+
+提交问题时请勿附带真实密码、授权码、Refresh Token、TOTP 密钥、代理口令或未脱敏邮件原件。贡献流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)，漏洞报告方式见 [`SECURITY.md`](SECURITY.md)。
+
+## 构建 Windows EXE
+
+确保开发依赖已经安装，并优先完成测试。构建脚本会从 `src/mailbox_manager/assets/app.svg` 生成 `assets/app.ico`，再调用 [`mailbox-manager.spec`](mailbox-manager.spec)。
+
+### 目录版（推荐用于排查和分发验证）
+
+```powershell
+.\.venv\Scripts\python.exe build.py --mode onedir --clean
+```
+
+输出：
+
+```text
+dist\MailDesk\MailDesk.exe
+```
+
+### 单文件版
+
+```powershell
+.\.venv\Scripts\python.exe build.py --mode onefile --clean
+```
+
+输出：
+
+```text
+dist\MailDesk.exe
+```
+
+`onefile` 首次启动时需要释放 Qt 运行时，通常比 `onedir` 慢。正式发布前应在干净的 Windows 10/11 环境中分别验证启动、主题切换、邮件正文渲染、网络协议和托盘功能；代码签名、杀毒软件信誉与安装器不由 PyInstaller 自动完成。
+
+## 项目结构
+
+```text
+MailDesk/
+├─ src/mailbox_manager/
+│  ├─ gui/                 # PySide6 主窗口、对话框、工作台、阅读器与主题
+│  ├─ protocols/           # IMAP、POP3、SMTP、Graph、OAuth2 与代理 Socket
+│  ├─ importers/           # TXT/CSV/JSON 导入与智能字段解析
+│  ├─ mail/                # MIME 解析、正文安全展示、远程图片与 Web 文档处理
+│  ├─ services/            # 取件、发件、代理、调度、自动化、Webhook、审计等
+│  ├─ storage/             # SQLite、DPAPI/Fernet 与仓储实现
+│  ├─ domain/              # 数据模型、状态与领域错误
+│  ├─ observability/       # 脱敏日志配置
+│  ├─ app.py               # 依赖装配与应用启动
+│  └─ __main__.py          # python -m mailbox_manager 入口
+├─ tests/                  # unit、integration 与 GUI 测试
+├─ examples/               # 脱敏导入示例
+├─ build.py                # PyInstaller 构建入口
+├─ mailbox-manager.spec    # onefile/onedir 共用构建规格
+├─ pyproject.toml          # 包元数据、依赖和工具配置
+├─ SPEC.md                 # 产品与架构规格
+└─ ENTERPRISE_FEATURES.md  # 企业功能与安全替代矩阵
+```
+
+## 已知限制与合规边界
+
+- 生产凭据存储依赖 Windows DPAPI；源码的主要目标平台是 Windows 10/11。
+- OAuth2 Client ID、Refresh Token 与所需权限必须通过服务商官方流程取得，MailDesk 不内置绕过式授权流程。
+- 服务商可能禁用基础认证、IMAP、POP3 或 SMTP；实际可用性取决于账号设置、租户政策和服务商限制。
+- 本地搜索只覆盖已经收取并保存到本机的邮件，不等同于服务商端的完整全文检索。
+- “单次取件数量设为 0”表示不设应用层数量上限，仍受服务商分页、连接稳定性、磁盘与内存资源限制。
+- 邮件移动、删除、转发和批量发送可能产生不可逆影响，启用前应先使用测试账号验证规则。
+- 自定义域名发现仅做少量常见候选探测，不执行隐藏浏览器登录、网页 DOM 抓信或自动开启协议。
+- 项目不执行批量改密、恢复邮箱修改、账号接管、自动删除安全规则、验证码绕过、身份/IP 隐匿或服务商风控规避。
+
+更详细的设计背景见 [`SPEC.md`](SPEC.md)，企业能力与安全替代见 [`ENTERPRISE_FEATURES.md`](ENTERPRISE_FEATURES.md)。
+
+## 贡献
+
+欢迎通过 [Issues](https://github.com/17sho/MailDesk/issues) 提交可复现缺陷或合规的功能建议，也欢迎提交 Pull Request。
+
+建议流程：
+
+1. Fork 仓库并从 `main` 创建主题分支。
+2. 保持改动范围清晰，为行为变更补充测试。
+3. 运行完整 `pytest` 与 `ruff` 检查。
+4. 在 Pull Request 中说明使用场景、验证方式、安全影响和兼容性变化。
+
+贡献代码不得包含真实邮箱凭据、个人邮件、规避服务商控制的实现或未经授权的自动化流程。提交前请先阅读本 README 的[合规边界](#已知限制与合规边界)。
+
+## 安全问题报告
+
+请不要在公开 Issue 中披露可利用漏洞或真实密钥。安全问题应通过 GitHub 的 [Private vulnerability reporting](https://github.com/17sho/MailDesk/security/advisories/new) 私下报告，并提供：
+
+- 受影响版本与 Windows/Python 环境；
+- 最小复现步骤和预期影响；
+- 已做脱敏的日志或示例数据；
+- 如已知，建议的缓解方案。
+
+## License
+
+MailDesk 使用 [MIT License](LICENSE) 开源。你可以在保留版权和许可声明的前提下使用、复制、修改、合并、发布和分发本项目。第三方依赖仍分别适用其各自的许可证。

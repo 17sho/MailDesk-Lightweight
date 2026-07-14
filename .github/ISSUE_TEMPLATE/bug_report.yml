@@ -1,0 +1,41 @@
+name: 缺陷报告
+description: 报告可复现的功能或界面问题
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: 请先移除截图和日志中的邮箱、Token、授权码及邮件正文。安全漏洞请使用私有安全报告。
+  - type: input
+    id: version
+    attributes:
+      label: MailDesk 版本或提交
+      placeholder: v0.2.0 / commit SHA
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 运行环境
+      placeholder: Windows 11 24H2，Python 3.12，onedir
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请提供最小且可重复的步骤。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为与脱敏日志
+    validations:
+      required: true

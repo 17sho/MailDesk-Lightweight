@@ -1,0 +1,4 @@
+email,secret,host,port
+owner@example.org,APP_PASSWORD,imap.example.org,993
+user@163.com,AUTHORIZATION_CODE,,
+

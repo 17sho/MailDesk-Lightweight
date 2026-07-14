@@ -1,0 +1,11 @@
+{
+  "accounts": [
+    {
+      "email": "owner@example.org",
+      "secret": "APP_PASSWORD",
+      "host": "imap.example.org",
+      "port": 993
+    }
+  ]
+}
+

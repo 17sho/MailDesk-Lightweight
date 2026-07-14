@@ -1,0 +1,2 @@
+"""Encrypted local persistence."""
+
