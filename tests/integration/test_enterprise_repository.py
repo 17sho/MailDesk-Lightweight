@@ -38,6 +38,9 @@ def test_database_migrates_existing_v1_accounts_and_creates_enterprise_tables(tm
 
     with sqlite3.connect(path) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(accounts)")}
+        message_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(messages)")
+        }
         tables = {
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -45,8 +48,9 @@ def test_database_migrates_existing_v1_accounts_and_creates_enterprise_tables(tm
         version = connection.execute("PRAGMA user_version").fetchone()[0]
 
     assert {"smtp_host", "smtp_port", "oauth_provider", "proxy_id", "web_auth_status"} <= columns
+    assert "sender_name" in message_columns
     assert {"proxies", "schedules", "webhooks", "automation_rules"} <= tables
-    assert version == 6
+    assert version == 7
 
 
 def test_group_and_tag_repositories_support_nested_assets(tmp_path) -> None:

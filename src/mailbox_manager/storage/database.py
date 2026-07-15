@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS messages (
     folder TEXT NOT NULL,
     subject TEXT NOT NULL DEFAULT '',
     sender TEXT NOT NULL DEFAULT '',
+    sender_name TEXT NOT NULL DEFAULT '',
     recipients_json TEXT NOT NULL DEFAULT '[]',
     catch_all_recipient TEXT NOT NULL DEFAULT '',
     received_at TEXT,
@@ -171,6 +172,7 @@ ACCOUNT_COLUMNS: dict[str, str] = {
 }
 
 MESSAGE_COLUMNS: dict[str, str] = {
+    "sender_name": "TEXT NOT NULL DEFAULT ''",
     "html_body": "TEXT NOT NULL DEFAULT ''",
     "web_html_body": "TEXT NOT NULL DEFAULT ''",
 }
@@ -224,4 +226,4 @@ class Database:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_proxies_default ON proxies(is_default DESC, id)"
             )
-            connection.execute("PRAGMA user_version = 6")
+            connection.execute("PRAGMA user_version = 7")

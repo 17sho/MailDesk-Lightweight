@@ -292,8 +292,8 @@ def test_settings_dialog_uses_responsive_navigation_and_linked_controls(qtbot) -
     qtbot.addWidget(dialog)
 
     assert dialog.minimumWidth() >= 720
-    assert dialog.navigation.count() == 8
-    assert dialog.pages.count() == 8
+    assert dialog.navigation.count() == 9
+    assert dialog.pages.count() == 9
     assert (
         dialog.pages.widget(0).horizontalScrollBarPolicy()
         is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
@@ -322,6 +322,10 @@ def test_settings_dialog_uses_responsive_navigation_and_linked_controls(qtbot) -
     assert dialog.translation_confirm.isChecked() is True
     dialog.navigation.setCurrentRow(6)
     assert dialog.pages.currentIndex() == 6
+    assert dialog.font_size.value() == 10
+    assert dialog.font_weight.currentData() == 500
+    dialog.navigation.setCurrentRow(7)
+    assert dialog.pages.currentIndex() == 7
     assert dialog.values()["dashboard_quick_actions"] == [
         "accounts",
         "fetch",
@@ -330,8 +334,8 @@ def test_settings_dialog_uses_responsive_navigation_and_linked_controls(qtbot) -
     ]
     assert dialog.values()["proxy_fetch_enabled"] is False
     assert dialog.values()["close_action"] == CLOSE_ACTION_ASK
-    dialog.navigation.setCurrentRow(7)
-    assert dialog.pages.currentIndex() == 7
+    dialog.navigation.setCurrentRow(8)
+    assert dialog.pages.currentIndex() == 8
     assert dialog.update_check_button.text() == "检查系统更新"
 
 

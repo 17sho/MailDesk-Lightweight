@@ -4,6 +4,7 @@ import re
 from urllib.parse import urlsplit
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -27,6 +28,12 @@ from PySide6.QtWidgets import (
 
 from mailbox_manager import __version__
 from mailbox_manager.domain.models import FetchRequest, PostAction, ProxyType
+from mailbox_manager.gui.appearance import (
+    DEFAULT_FONT_WEIGHT,
+    MAX_FONT_SIZE,
+    MIN_FONT_SIZE,
+    normalized_appearance,
+)
 from mailbox_manager.gui.close_dialog import (
     CLOSE_ACTION_ASK,
     CLOSE_ACTION_EXIT,
@@ -87,6 +94,7 @@ class EnterpriseSettingsDialog(QDialog):
         self.pages.addWidget(self._webhook_page())
         self.pages.addWidget(self._rule_page())
         self.pages.addWidget(self._translation_page(values))
+        self.pages.addWidget(self._appearance_page(values))
         self.pages.addWidget(self._dashboard_page(values))
         self.pages.addWidget(self._update_page())
         shell_layout.addWidget(self.pages, 1)
@@ -115,7 +123,7 @@ class EnterpriseSettingsDialog(QDialog):
         copy.setSpacing(2)
         title = QLabel("系统设置")
         title.setObjectName("settingsTitle")
-        subtitle = QLabel("管理收件策略、邮件翻译、网络代理和自动化连接")
+        subtitle = QLabel("管理收件策略、显示字体、深色主题、网络代理和自动化连接")
         subtitle.setObjectName("settingsSubtitle")
         copy.addWidget(title)
         copy.addWidget(subtitle)
@@ -142,9 +150,10 @@ class EnterpriseSettingsDialog(QDialog):
                 "收件与处理",
                 "调度与节流",
                 "网络代理",
-                "新增 Webhook",
-                "新增规则",
+                "Webhook 对接",
+                "自动化规则",
                 "邮件翻译",
+                "外观与字体",
                 "工作台",
                 "系统更新",
             ]
@@ -458,6 +467,87 @@ class EnterpriseSettingsDialog(QDialog):
         layout.addStretch(1)
         return page
 
+    def _appearance_page(self, values: dict[str, object]) -> QScrollArea:
+        page, layout = self._new_page(
+            "外观与字体",
+            "调整整个软件的文字大小、字重与字体，并统一浅色和深色界面的可读性。",
+        )
+        appearance = normalized_appearance(values)
+        theme_form = self._add_card(
+            layout,
+            "界面主题",
+            "保存后立即应用到主窗口、设置、菜单、提示框和邮件阅读器工具区域。",
+        )
+        self.dark_theme = QCheckBox("启用深色模式")
+        self.dark_theme.setChecked(bool(appearance["dark_theme"]))
+        self._add_row(theme_form, "颜色模式", self.dark_theme)
+
+        font_form = self._add_card(
+            layout,
+            "全局文字",
+            "标题仍会保留层级差异；正文、按钮、表格和菜单会使用下面的基础设置。",
+        )
+        self.font_family = QComboBox()
+        self.font_family.addItem("跟随系统推荐字体", "")
+        installed = set(QFontDatabase.families())
+        preferred = (
+            "Microsoft YaHei UI",
+            "PingFang SC",
+            "Noto Sans CJK SC",
+            "Segoe UI",
+        )
+        for family in preferred:
+            if family in installed:
+                self.font_family.addItem(family, family)
+        current_family = str(appearance["font_family"])
+        family_index = self.font_family.findData(current_family)
+        if current_family and family_index < 0:
+            self.font_family.addItem(current_family, current_family)
+            family_index = self.font_family.count() - 1
+        self.font_family.setCurrentIndex(max(0, family_index))
+
+        self.font_size = QSpinBox()
+        self.font_size.setRange(MIN_FONT_SIZE, MAX_FONT_SIZE)
+        self.font_size.setValue(int(appearance["font_size"]))
+        self.font_size.setSuffix(" pt")
+        self.font_weight = QComboBox()
+        for label, weight in (
+            ("标准", 400),
+            ("清晰（推荐）", 500),
+            ("半粗", 600),
+            ("粗体", 700),
+        ):
+            self.font_weight.addItem(label, weight)
+        self.font_weight.setCurrentIndex(
+            max(0, self.font_weight.findData(int(appearance["font_weight"])))
+        )
+        self._add_row(font_form, "字体", self.font_family)
+        self._add_row(font_form, "文字大小", self.font_size)
+        self._add_row(font_form, "文字粗细", self.font_weight)
+
+        preview_form = self._add_card(
+            layout,
+            "效果预览",
+            "预览仅展示文字参数；颜色模式会在保存后切换。",
+        )
+        self.font_preview = QLabel("MailDesk 邮箱工作台 · 验证码 482913 · Aa 123")
+        self.font_preview.setObjectName("fontPreviewLabel")
+        self.font_preview.setWordWrap(True)
+        self._add_row(preview_form, "示例", self.font_preview)
+        self.font_family.currentIndexChanged.connect(self._update_font_preview)
+        self.font_size.valueChanged.connect(self._update_font_preview)
+        self.font_weight.currentIndexChanged.connect(self._update_font_preview)
+        self._update_font_preview()
+        layout.addStretch(1)
+        return page
+
+    def _update_font_preview(self, *_args) -> None:
+        family = str(self.font_family.currentData() or self.font().family())
+        font = QFont(family)
+        font.setPointSize(self.font_size.value())
+        font.setWeight(QFont.Weight(int(self.font_weight.currentData())))
+        self.font_preview.setFont(font)
+
     def _proxy_page(self, values: dict[str, object]) -> QScrollArea:
         page, layout = self._new_page(
             "网络代理",
@@ -668,7 +758,7 @@ class EnterpriseSettingsDialog(QDialog):
             return
         quick_actions = values["dashboard_quick_actions"]
         if not isinstance(quick_actions, list) or len(set(quick_actions)) != 4:
-            self.navigation.setCurrentRow(6)
+            self.navigation.setCurrentRow(7)
             QMessageBox.warning(
                 self,
                 "快捷入口重复",
@@ -803,6 +893,10 @@ class EnterpriseSettingsDialog(QDialog):
             "rule_forward": self.rule_forward.text().strip().casefold(),
             "translation_language": self.translation_language.currentData(),
             "translation_confirm": self.translation_confirm.isChecked(),
+            "dark_theme": self.dark_theme.isChecked(),
+            "font_family": str(self.font_family.currentData() or ""),
+            "font_size": self.font_size.value(),
+            "font_weight": int(self.font_weight.currentData() or DEFAULT_FONT_WEIGHT),
             "dashboard_quick_actions": [
                 combo.currentData() for combo in self.dashboard_quick_action_boxes
             ],

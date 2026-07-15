@@ -118,6 +118,7 @@ class MailMessage:
     transport_id: str = ""
     subject: str = ""
     sender: str = ""
+    sender_name: str = ""
     recipients: tuple[str, ...] = ()
     catch_all_recipient: str = ""
     received_at: datetime | None = None
@@ -130,6 +131,14 @@ class MailMessage:
     eml_path: str = ""
     message_id: int | None = None
     account_id: int | None = None
+
+    @property
+    def sender_display(self) -> str:
+        name = self.sender_name.strip()
+        address = self.sender.strip()
+        if name and address and name.casefold() != address.casefold():
+            return f"{name} <{address}>"
+        return name or address
 
 
 @dataclass(frozen=True, slots=True)

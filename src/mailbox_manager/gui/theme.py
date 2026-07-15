@@ -665,6 +665,13 @@ QLabel#providerInfoIcon {
     border-radius: 8px;
 }
 QLabel#providerInfoText { color: #315580; font-size: 11px; }
+QLabel#fontPreviewLabel {
+    background: #f8fbff;
+    color: #172033;
+    border: 1px solid #d8e4f2;
+    border-radius: 9px;
+    padding: 14px;
+}
 QPlainTextEdit#credentialTextArea {
     background: #fbfdff;
     font-family: "Cascadia Mono", "Consolas";
@@ -819,6 +826,11 @@ QLabel#mailViewerTitle { color: #0f172a; font-size: 18px; font-weight: 700; }
 QFrame#mailViewerSidebar { background: #f8fafc; border-right: 1px solid #e2e8f0; }
 QFrame#mailViewerContent { background: #ffffff; }
 QLabel#mailViewerSender { color: #0f172a; font-size: 15px; font-weight: 700; }
+QLabel#mailViewerSenderAddress {
+    color: #526176;
+    font-size: 12px;
+    font-weight: 600;
+}
 QLabel#mailViewerSubject { color: #0f172a; font-size: 20px; font-weight: 700; }
 QListWidget#mailReaderList { background: transparent; border: 0; outline: 0; }
 QListWidget#mailReaderList::item {
@@ -1741,6 +1753,13 @@ QLabel#providerInfoIcon {
     border-radius: 8px;
 }
 QLabel#providerInfoText { color: #a9c8f7; font-size: 11px; }
+QLabel#fontPreviewLabel {
+    background: #101722;
+    color: #f1f5f9;
+    border: 1px solid #344258;
+    border-radius: 9px;
+    padding: 14px;
+}
 QPlainTextEdit#credentialTextArea {
     background: #121a26;
     font-family: "Cascadia Mono", "Consolas";
@@ -1874,6 +1893,11 @@ QLabel#mailViewerTitle { color: #f8fafc; font-size: 18px; font-weight: 700; }
 QFrame#mailViewerSidebar { background: #121a26; border-right: 1px solid #273244; }
 QFrame#mailViewerContent { background: #0f1520; }
 QLabel#mailViewerSender { color: #f8fafc; font-size: 15px; font-weight: 700; }
+QLabel#mailViewerSenderAddress {
+    color: #aeb9c9;
+    font-size: 12px;
+    font-weight: 600;
+}
 QLabel#mailViewerSubject { color: #f8fafc; font-size: 20px; font-weight: 700; }
 QListWidget#mailReaderList { background: transparent; border: 0; outline: 0; }
 QListWidget#mailReaderList::item {
@@ -2103,7 +2127,38 @@ QMenu::right-arrow {
     height: 8px;
     right: 10px;
 }
-QToolTip { background: #e5eaf2; color: #0f1520; border: 0; padding: 5px 8px; }
+QToolTip {
+    background: #e8edf5;
+    color: #0f1520;
+    border: 1px solid #ffffff;
+    border-radius: 6px;
+    padding: 6px 9px;
+}
+QMessageBox QLabel { color: #e8edf5; min-width: 280px; }
+QMessageBox QPushButton { min-width: 82px; }
+QProgressBar {
+    background: #101722;
+    color: #e8edf5;
+    border: 1px solid #344258;
+    border-radius: 6px;
+    text-align: center;
+    min-height: 16px;
+}
+QProgressBar::chunk { background: #3b82f6; border-radius: 5px; }
+QFileDialog QListView, QFileDialog QTreeView,
+QFileDialog QHeaderView::section {
+    background: #111925;
+    color: #e5eaf2;
+    border-color: #2b374a;
+}
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
+QScrollBar::handle:horizontal {
+    background: #3a475c;
+    border-radius: 4px;
+    min-width: 28px;
+}
+QScrollBar::handle:horizontal:hover { background: #526177; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 QDialog#closeWindowDialog { background: transparent; }
 QFrame#closeDialogCard {
     background: #151d2a;

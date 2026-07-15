@@ -101,6 +101,7 @@ def configure_ui_font(application: QApplication) -> None:
         application.setFont(
             QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
         )
+        application.setProperty("maildeskBaseFontFamily", application.font().family())
         return
     windows_fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
     for filename in ("msyh.ttc", "msyhbd.ttc"):
@@ -112,8 +113,10 @@ def configure_ui_font(application: QApplication) -> None:
             families = QFontDatabase.applicationFontFamilies(font_id)
             if families:
                 application.setFont(QFont(families[0], 9))
+                application.setProperty("maildeskBaseFontFamily", families[0])
                 return
     application.setFont(QFont("Microsoft YaHei UI", 9))
+    application.setProperty("maildeskBaseFontFamily", application.font().family())
 
 
 def configure_translations(application: QApplication) -> bool:

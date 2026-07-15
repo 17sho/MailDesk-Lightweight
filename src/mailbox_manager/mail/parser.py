@@ -886,11 +886,17 @@ def parse_email_message(
     message_id = str(message.get("Message-ID") or "").strip()
     if not message_id:
         message_id = str(abs(hash(raw[:4096])))
+    sender_name = (
+        _decode_header(sender_addresses[0][0]).strip()[:500]
+        if sender_addresses
+        else ""
+    )
     return MailMessage(
         provider_message_id=message_id,
         folder=folder,
         subject=subject,
         sender=sender_addresses[0][1].casefold() if sender_addresses else "",
+        sender_name=sender_name,
         recipients=recipients,
         catch_all_recipient=catch_all,
         received_at=received_at,

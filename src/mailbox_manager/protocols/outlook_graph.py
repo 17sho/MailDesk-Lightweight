@@ -251,6 +251,7 @@ class OutlookGraphClient(EmailClientBase):
             text = clean_message_text(raw_content)
         sender_value = item.get("from")
         sender = _graph_address(sender_value)
+        sender_name = _graph_address_name(sender_value)
         recipient_values = item.get("toRecipients")
         recipients = tuple(
             address
@@ -278,6 +279,7 @@ class OutlookGraphClient(EmailClientBase):
             transport_id=str(item.get("id", "")),
             subject=subject,
             sender=sender,
+            sender_name=sender_name,
             recipients=recipients,
             catch_all_recipient=catch_all or (recipients[0] if recipients else ""),
             received_at=received_at,
@@ -512,6 +514,15 @@ def _graph_address(value: object) -> str:
         return ""
     address = email_address.get("address")
     return str(address).casefold() if address else ""
+
+
+def _graph_address_name(value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    email_address = value.get("emailAddress")
+    if not isinstance(email_address, dict):
+        return ""
+    return str(email_address.get("name") or "").strip()[:500]
 
 
 def _graph_recipients(values: tuple[str, ...]) -> list[dict[str, dict[str, str]]]:

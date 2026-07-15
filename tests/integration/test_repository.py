@@ -160,7 +160,47 @@ def test_message_repository_migrates_and_refreshes_html_body(tmp_path) -> None:
         ).fetchone()
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert attachment_table == ("attachments",)
-    assert version == 6
+    assert version == 7
+
+
+def test_message_repository_persists_and_searches_sender_name(tmp_path) -> None:
+    database = Database(tmp_path / "sender-name.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"S" * 32))
+    accounts.add_many(
+        [
+            EmailAccount(
+                email="owner@example.com",
+                provider="custom",
+                protocol=ProtocolType.IMAP,
+                host="imap.example.com",
+                port=993,
+                secret="secret",
+            )
+        ]
+    )
+    account_id = accounts.list_all()[0].account_id
+    assert account_id is not None
+    messages = MessageRepository(database)
+    messages.add_many(
+        account_id,
+        (
+            MailMessage(
+                provider_message_id="named-sender",
+                folder="INBOX",
+                sender_name="Security Team",
+                sender="security@example.com",
+                subject="Notice",
+            ),
+        ),
+    )
+
+    loaded = messages.list_for_account(account_id)[0]
+    hits = messages.search("Security Team")
+
+    assert loaded.sender_name == "Security Team"
+    assert loaded.sender_display == "Security Team <security@example.com>"
+    assert [hit.message.provider_message_id for hit in hits] == ["named-sender"]
 
 
 def test_message_repository_persists_attachment_and_loads_binary_on_demand(tmp_path) -> None:

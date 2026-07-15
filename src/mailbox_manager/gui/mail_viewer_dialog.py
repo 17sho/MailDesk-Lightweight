@@ -158,6 +158,14 @@ class MailViewerDialog(QDialog):
         content_layout.setSpacing(8)
         self.sender_label = QLabel("选择一封邮件")
         self.sender_label.setObjectName("mailViewerSender")
+        self.sender_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.sender_address_label = QLabel()
+        self.sender_address_label.setObjectName("mailViewerSenderAddress")
+        self.sender_address_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         self.subject_label = QLabel()
         self.subject_label.setObjectName("mailViewerSubject")
         self.subject_label.setWordWrap(True)
@@ -165,6 +173,7 @@ class MailViewerDialog(QDialog):
         self.meta_label.setObjectName("sectionCaption")
         self.meta_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         content_layout.addWidget(self.sender_label)
+        content_layout.addWidget(self.sender_address_label)
         content_layout.addWidget(self.subject_label)
         content_layout.addWidget(self.meta_label)
         self._build_translation_bar(content_layout)
@@ -299,7 +308,10 @@ class MailViewerDialog(QDialog):
         inbox_count = 0
         special_count = 0
         for index, message in enumerate(self._messages):
-            haystack = f"{message.subject}\n{message.sender}\n{message.text_body}".casefold()
+            haystack = (
+                f"{message.subject}\n{message.sender_name}\n{message.sender}\n"
+                f"{message.text_body}"
+            ).casefold()
             if query and query not in haystack:
                 continue
             widget = self.inbox_list if message.folder.casefold() == "inbox" else self.special_list
@@ -309,7 +321,7 @@ class MailViewerDialog(QDialog):
                 else ""
             )
             preview = " ".join(clean_message_text(message.text_body).split())[:105]
-            sender = message.sender or "未知发件人"
+            sender = message.sender_display or "未知发件人"
             item = QListWidgetItem(
                 f"{sender}   {received}\n{message.subject or '(无主题)'}\n{preview}"
             )
@@ -342,7 +354,8 @@ class MailViewerDialog(QDialog):
         self._render_generation += 1
         self._invalidate_translation()
         self._current_message = message
-        self.sender_label.setText(message.sender or "未知发件人")
+        self.sender_label.setText(f"发件人：{message.sender_name or '未提供名称'}")
+        self.sender_address_label.setText(f"邮箱：{message.sender or '未知邮箱'}")
         self.subject_label.setText(message.subject or "(无主题)")
         received = (
             message.received_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")

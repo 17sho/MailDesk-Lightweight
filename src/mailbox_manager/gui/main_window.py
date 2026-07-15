@@ -83,6 +83,11 @@ from mailbox_manager.gui.account_model import (
     AccountTableView,
 )
 from mailbox_manager.gui.add_account_dialog import AddAccountDialog
+from mailbox_manager.gui.appearance import (
+    apply_application_appearance,
+    normalized_appearance,
+    scaled_stylesheet,
+)
 from mailbox_manager.gui.close_dialog import (
     CLOSE_ACTION_ASK,
     CLOSE_ACTION_EXIT,
@@ -192,6 +197,9 @@ _ONE_SHOT_ENTERPRISE_SETTING_KEYS = frozenset(
         "rule_forward",
     }
 )
+_UI_PREFERENCE_KEYS = frozenset(
+    {"dark_theme", "font_family", "font_size", "font_weight"}
+)
 
 
 def _persistent_enterprise_settings(values: dict[str, object]) -> dict[str, object]:
@@ -200,7 +208,7 @@ def _persistent_enterprise_settings(values: dict[str, object]) -> dict[str, obje
     return {
         key: value
         for key, value in values.items()
-        if key not in _ONE_SHOT_ENTERPRISE_SETTING_KEYS
+        if key not in _ONE_SHOT_ENTERPRISE_SETTING_KEYS | _UI_PREFERENCE_KEYS
     }
 
 
@@ -319,10 +327,14 @@ class MainWindow(QMainWindow):
         self._mail_viewer: MailViewerDialog | None = None
         ui_preferences = settings.get("ui_preferences", {}) if settings is not None else {}
         ui_preferences = ui_preferences if isinstance(ui_preferences, dict) else {}
-        self._dark = bool(ui_preferences.get("dark_theme", False))
+        appearance = normalized_appearance(ui_preferences)
+        self._dark = bool(appearance["dark_theme"])
+        self._font_family = str(appearance["font_family"])
+        self._font_size = int(appearance["font_size"])
+        self._font_weight = int(appearance["font_weight"])
         application = QApplication.instance()
         if application is not None:
-            application.setProperty("maildeskDarkTheme", self._dark)
+            apply_application_appearance(application, appearance)
         self._tray: QSystemTrayIcon | None = None
         self._force_close = False
         self._toolbar_compact: bool | None = None
@@ -346,7 +358,12 @@ class MainWindow(QMainWindow):
         self._create_toolbar()
         self._create_content()
         self.page_toast = BottomToast(self)
-        self.setStyleSheet(DARK_THEME if self._dark else LIGHT_THEME)
+        self.setStyleSheet(
+            scaled_stylesheet(
+                DARK_THEME if self._dark else LIGHT_THEME,
+                self._font_size,
+            )
+        )
         self.theme_action.setText("浅色主题" if self._dark else "深色主题")
         if hasattr(self, "dashboard"):
             self.dashboard.apply_theme(self._dark)
@@ -2123,10 +2140,15 @@ class MainWindow(QMainWindow):
                 else ""
             )
             account_email = self._displayed_message_accounts[index]
-            meta = "  ·  ".join(
-                item for item in (account_email, message.sender, received) if item
+            sender = message.sender_display or "未知发件人"
+            account_meta = "  ·  ".join(
+                item for item in (account_email, received) if item
             )
-            self.message_list.addItem(f"{message.subject or '(无主题)'}\n{meta}")
+            self.message_list.addItem(
+                f"{message.subject or '(无主题)'}\n"
+                f"发件人：{sender}\n"
+                f"收件账号：{account_meta}"
+            )
         self.message_count_label.setText(f"{len(self._displayed_messages)} {count_suffix}")
         if self._displayed_messages:
             self.message_list.setCurrentRow(0)
@@ -2351,6 +2373,7 @@ class MainWindow(QMainWindow):
             self._visible_message_attachments
         )
         context = [message.subject or "(无主题)"]
+        context.append(f"发件人 {message.sender_display or '未知发件人'}")
         if row < len(self._displayed_message_accounts):
             account_email = self._displayed_message_accounts[row]
             if account_email:
@@ -2736,11 +2759,37 @@ class MainWindow(QMainWindow):
         self._remote_image_workers.pop(generation, None)
 
     def toggle_theme(self) -> None:
-        self._dark = not self._dark
+        self._apply_appearance_preferences(
+            {
+                "dark_theme": not self._dark,
+                "font_family": self._font_family,
+                "font_size": self._font_size,
+                "font_weight": self._font_weight,
+            },
+            persist=True,
+        )
+
+    def _apply_appearance_preferences(
+        self,
+        values: dict[str, object],
+        *,
+        persist: bool,
+    ) -> None:
+        appearance = normalized_appearance(values)
+        self._dark = bool(appearance["dark_theme"])
+        self._font_family = str(appearance["font_family"])
+        self._font_size = int(appearance["font_size"])
+        self._font_weight = int(appearance["font_weight"])
         application = QApplication.instance()
         if application is not None:
-            application.setProperty("maildeskDarkTheme", self._dark)
-        self.setStyleSheet(DARK_THEME if self._dark else LIGHT_THEME)
+            apply_application_appearance(application, appearance)
+            self.setFont(application.font())
+        self.setStyleSheet(
+            scaled_stylesheet(
+                DARK_THEME if self._dark else LIGHT_THEME,
+                self._font_size,
+            )
+        )
         self.theme_action.setText("浅色主题" if self._dark else "深色主题")
         self._set_toolbar_icons()
         if hasattr(self, "dashboard"):
@@ -2749,8 +2798,8 @@ class MainWindow(QMainWindow):
             self._render_translation_view()
         elif self._rendered_html_fragment:
             self._render_email_html(self._rendered_html_fragment)
-        if self._settings is not None:
-            self._settings.set("ui_preferences", {"dark_theme": self._dark})
+        if persist and self._settings is not None:
+            self._settings.set("ui_preferences", appearance)
 
     def _show_account_context_menu(self, position) -> None:
         index = self.account_table.indexAt(position)
@@ -3558,6 +3607,18 @@ class MainWindow(QMainWindow):
             fetch_values = self._settings.get("fetch", {})
             if isinstance(fetch_values, dict):
                 current.update(fetch_values)
+            ui_values = self._settings.get("ui_preferences", {})
+            if isinstance(ui_values, dict):
+                current.update(normalized_appearance(ui_values))
+        else:
+            current.update(
+                {
+                    "dark_theme": self._dark,
+                    "font_family": self._font_family,
+                    "font_size": self._font_size,
+                    "font_weight": self._font_weight,
+                }
+            )
         if self._schedules is not None:
             selected_group_id = self._selected_group_id()
             selected_schedule = next(
@@ -3656,6 +3717,7 @@ class MainWindow(QMainWindow):
                 ),
                 bool(values.get("translation_confirm", True)),
             )
+            self._apply_appearance_preferences(values, persist=True)
             self.statusBar().showMessage("企业设置已保存", 8000)
             self.page_toast.show_message("系统设置已保存并应用")
         except Exception as exc:

@@ -74,3 +74,20 @@ def test_mail_viewer_falls_back_when_html_has_no_valid_media(qtbot) -> None:
     qtbot.addWidget(dialog)
 
     assert "独立阅读器应显示的纯文本正文" in dialog.body.toPlainText()
+
+
+def test_mail_viewer_shows_sender_name_and_address_separately(qtbot) -> None:
+    message = MailMessage(
+        provider_message_id="sender-details",
+        folder="INBOX",
+        subject="发件人信息",
+        sender_name="Security Team",
+        sender="security@example.com",
+        text_body="正文",
+    )
+    dialog = MailViewerDialog(_account(), [message])
+    qtbot.addWidget(dialog)
+
+    assert dialog.sender_label.text() == "发件人：Security Team"
+    assert dialog.sender_address_label.text() == "邮箱：security@example.com"
+    assert "Security Team <security@example.com>" in dialog.inbox_list.item(0).text()

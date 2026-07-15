@@ -757,7 +757,7 @@ class DashboardWidget(QWidget):
                 if message.received_at
                 else ""
             )
-            sender = message.sender or "未知发件人"
+            sender = message.sender_display or "未知发件人"
             item = QListWidgetItem(
                 f"{message.subject or '(无主题)'}\n"
                 f"{hit.account_email}  ·  {sender}  ·  {received}"

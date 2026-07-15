@@ -33,6 +33,9 @@ def test_parse_multipart_message_extracts_code_and_catch_all_recipient() -> None
     parsed = parse_email_message(message.as_bytes(), folder="INBOX")
 
     assert parsed.provider_message_id == "<message-1@example.com>"
+    assert parsed.sender_name == "Security"
+    assert parsed.sender == "security@example.com"
+    assert parsed.sender_display == "Security <security@example.com>"
     assert parsed.catch_all_recipient == "virtual-user@example.net"
     assert parsed.recipients == ("alias@example.net",)
     assert "482913" in parsed.matched_values

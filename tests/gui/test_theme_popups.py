@@ -6,8 +6,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import QPoint, qInstallMessageHandler
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication, QComboBox, QMenu, QWidget
 
+from mailbox_manager.gui.appearance import appearance_palette, scaled_stylesheet
 from mailbox_manager.gui.theme import DARK_THEME, LIGHT_THEME
 
 
@@ -88,3 +90,17 @@ def test_popup_styles_parse_and_provide_comfortable_rows(
         if "stylesheet" in message.lower() or "unknown property" in message.lower()
     ]
     assert stylesheet_warnings == []
+
+
+def test_font_scaling_updates_explicit_theme_font_sizes() -> None:
+    scaled = scaled_stylesheet("QLabel { font-size: 10px; }", 14)
+
+    assert "font-size: 14px" in scaled
+
+
+def test_dark_palette_covers_native_dialog_text_and_selection() -> None:
+    palette = appearance_palette(True)
+
+    assert palette.color(QPalette.ColorRole.Window).lightness() < 50
+    assert palette.color(QPalette.ColorRole.WindowText).lightness() > 180
+    assert palette.color(QPalette.ColorRole.Highlight).blue() > 180

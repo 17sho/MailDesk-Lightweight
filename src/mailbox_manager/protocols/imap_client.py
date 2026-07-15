@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import imaplib
+import logging
 import re
-import socket
 import ssl
 from collections.abc import Callable
 from contextlib import suppress
@@ -24,7 +24,9 @@ from mailbox_manager.protocols.proxy_socket import create_proxy_socket
 
 ConnectionFactory = Callable[..., imaplib.IMAP4]
 IMAP_FETCH_BATCH_SIZE = 25
+IMAP_COMMAND_TIMEOUT = 90.0
 UID_RESPONSE_PATTERN = re.compile(rb"\bUID\s+(\d+)\b", re.IGNORECASE)
+logger = logging.getLogger("maildesk.imap")
 
 
 class ImapClient(EmailClientBase):
@@ -33,20 +35,24 @@ class ImapClient(EmailClientBase):
         account: EmailAccount,
         *,
         timeout: float = 20.0,
+        command_timeout: float = IMAP_COMMAND_TIMEOUT,
         oauth_access_token: str = "",
         connection_factory: ConnectionFactory | None = None,
         proxy: ProxyConfig | None = None,
     ) -> None:
         self._account = account
         self._timeout = timeout
+        self._command_timeout = max(float(timeout), float(command_timeout))
         self._oauth_access_token = oauth_access_token
         self._factory = connection_factory
         self._connection: imaplib.IMAP4 | None = None
         self._proxy = proxy
+        self._stage = "connect"
 
     def _connect(self) -> imaplib.IMAP4:
         if self._connection is not None:
             return self._connection
+        self._stage = "connect"
         factory = self._factory
         if factory is None and self._proxy is not None:
             connection = _proxy_imap_connection(
@@ -69,17 +75,31 @@ class ImapClient(EmailClientBase):
             connection = factory(
                 self._account.host, self._account.port, timeout=self._timeout
             )
-        if self._account.security.value == "starttls":
-            connection.starttls(ssl_context=ssl.create_default_context())
-        if self._oauth_access_token:
-            auth = (
-                f"user={self._account.username}\x01"
-                f"auth=Bearer {self._oauth_access_token}\x01\x01"
-            )
-            connection.authenticate("XOAUTH2", lambda _challenge: auth.encode("utf-8"))
-        else:
-            connection.login(self._account.username or self._account.email, self._account.secret)
+        try:
+            _set_connection_timeout(connection, self._command_timeout)
+            if self._account.security.value == "starttls":
+                self._stage = "tls"
+                connection.starttls(ssl_context=ssl.create_default_context())
+                _set_connection_timeout(connection, self._command_timeout)
+            self._stage = "login"
+            if self._oauth_access_token:
+                auth = (
+                    f"user={self._account.username}\x01"
+                    f"auth=Bearer {self._oauth_access_token}\x01\x01"
+                )
+                connection.authenticate(
+                    "XOAUTH2", lambda _challenge: auth.encode("utf-8")
+                )
+            else:
+                connection.login(
+                    self._account.username or self._account.email,
+                    self._account.secret,
+                )
+        except Exception:
+            _abort_connection(connection)
+            raise
         self._connection = connection
+        self._stage = "ready"
         return connection
 
     def test_connection(self) -> ConnectionResult:
@@ -87,12 +107,14 @@ class ImapClient(EmailClientBase):
             self._connect()
             return ConnectionResult(AccountStatus.SUCCESS, "连接成功")
         except Exception as exc:
-            status, detail = _classify_imap_error(exc)
+            status, detail = _classify_imap_error(exc, self._stage)
             return ConnectionResult(status, detail)
 
     def list_folders(self) -> list[MailFolder]:
         try:
-            status, rows = self._connect().list()
+            connection = self._connect()
+            self._stage = "list_folders"
+            status, rows = connection.list()
             if status != "OK":
                 return []
             folders: list[MailFolder] = []
@@ -104,73 +126,110 @@ class ImapClient(EmailClientBase):
                 )
                 folders.append(_parse_folder(decoded))
             return folders
+        except TimeoutError:
+            raise
         except Exception:
             return []
 
     def fetch_messages(self, request: FetchRequest) -> FetchResult:
+        attempts = 2 if request.post_action is PostAction.NONE else 1
+        for attempt in range(attempts):
+            try:
+                return self._fetch_messages_once(request)
+            except TimeoutError as exc:
+                stage = self._stage
+                logger.warning(
+                    "IMAP timeout host=%s stage=%s attempt=%s/%s",
+                    self._account.host,
+                    stage,
+                    attempt + 1,
+                    attempts,
+                )
+                self._disconnect(abort=True)
+                if attempt + 1 < attempts:
+                    continue
+                status, detail = _classify_imap_error(
+                    exc,
+                    stage,
+                    retry_exhausted=attempts > 1,
+                )
+                return FetchResult(status, detail=detail)
+            except Exception as exc:
+                status, detail = _classify_imap_error(exc, self._stage)
+                return FetchResult(status, detail=detail)
+        return FetchResult(AccountStatus.TIMEOUT, detail="收取邮件超时")
+
+    def _fetch_messages_once(self, request: FetchRequest) -> FetchResult:
         messages = []
-        try:
-            connection = self._connect()
-            remaining: int | None = None if request.unlimited else request.max_messages
-            folders = list(request.folders)
-            if request.include_special_folders:
-                existing = {folder.casefold() for folder in folders}
-                for candidate in self.list_folders():
-                    if _is_special_folder(candidate) and candidate.name.casefold() not in existing:
-                        folders.append(candidate.name)
-                        existing.add(candidate.name.casefold())
-            for folder in folders:
+        connection = self._connect()
+        remaining: int | None = None if request.unlimited else request.max_messages
+        folders = list(request.folders)
+        if request.include_special_folders:
+            existing = {folder.casefold() for folder in folders}
+            for candidate in self.list_folders():
+                if _is_special_folder(candidate) and candidate.name.casefold() not in existing:
+                    folders.append(candidate.name)
+                    existing.add(candidate.name.casefold())
+        for folder in folders:
+            if remaining is not None and remaining <= 0:
+                break
+            self._stage = "select_folder"
+            status, _ = connection.select(
+                folder, readonly=request.post_action is PostAction.NONE
+            )
+            if status != "OK":
+                continue
+            self._stage = "search"
+            status, search_data = connection.uid("search", None, "ALL")
+            if status != "OK" or not search_data:
+                continue
+            identifiers = search_data[0].split()
+            if remaining is not None:
+                identifiers = identifiers[-remaining:]
+            newest_first = list(reversed(identifiers))
+            for offset in range(0, len(newest_first), IMAP_FETCH_BATCH_SIZE):
+                batch = newest_first[offset : offset + IMAP_FETCH_BATCH_SIZE]
+                self._stage = "download_messages"
+                for identifier, raw in _fetch_uid_messages(connection, batch):
+                    message = parse_email_message(
+                        raw,
+                        folder=folder,
+                        keywords=request.keywords,
+                        custom_pattern=request.custom_pattern,
+                    )
+                    message = replace(
+                        message,
+                        transport_id=_uid_text(identifier),
+                    )
+                    if not request.include_raw:
+                        message = replace(message, raw_eml=b"")
+                    messages.append(message)
+                    if (
+                        message.matched_values
+                        and request.post_action is not PostAction.NONE
+                    ):
+                        self._stage = "post_action"
+                        _apply_post_action(connection, identifier, request)
+                    if remaining is not None:
+                        remaining -= 1
+                        if remaining <= 0:
+                            break
                 if remaining is not None and remaining <= 0:
                     break
-                status, _ = connection.select(
-                    folder, readonly=request.post_action is PostAction.NONE
-                )
-                if status != "OK":
-                    continue
-                status, search_data = connection.uid("search", None, "ALL")
-                if status != "OK" or not search_data:
-                    continue
-                identifiers = search_data[0].split()
-                if remaining is not None:
-                    identifiers = identifiers[-remaining:]
-                newest_first = list(reversed(identifiers))
-                for offset in range(0, len(newest_first), IMAP_FETCH_BATCH_SIZE):
-                    batch = newest_first[offset : offset + IMAP_FETCH_BATCH_SIZE]
-                    for identifier, raw in _fetch_uid_messages(connection, batch):
-                        message = parse_email_message(
-                            raw,
-                            folder=folder,
-                            keywords=request.keywords,
-                            custom_pattern=request.custom_pattern,
-                        )
-                        message = replace(
-                            message,
-                            transport_id=_uid_text(identifier),
-                        )
-                        if not request.include_raw:
-                            message = replace(message, raw_eml=b"")
-                        messages.append(message)
-                        if (
-                            message.matched_values
-                            and request.post_action is not PostAction.NONE
-                        ):
-                            _apply_post_action(connection, identifier, request)
-                        if remaining is not None:
-                            remaining -= 1
-                            if remaining <= 0:
-                                break
-                    if remaining is not None and remaining <= 0:
-                        break
-            return FetchResult(AccountStatus.SUCCESS, tuple(messages), "收取完成")
-        except Exception as exc:
-            status, detail = _classify_imap_error(exc)
-            return FetchResult(status, tuple(messages), detail)
+        self._stage = "ready"
+        return FetchResult(AccountStatus.SUCCESS, tuple(messages), "收取完成")
 
     def close(self) -> None:
+        self._disconnect(abort=False)
+
+    def _disconnect(self, *, abort: bool) -> None:
         connection, self._connection = self._connection, None
         if connection is not None:
-            with suppress(imaplib.IMAP4.error, OSError):
-                connection.logout()
+            if abort:
+                _abort_connection(connection)
+            else:
+                with suppress(imaplib.IMAP4.error, OSError):
+                    connection.logout()
 
     def apply_action(
         self,
@@ -311,16 +370,52 @@ def _apply_post_action(
         connection.expunge()
 
 
-def _classify_imap_error(exc: Exception) -> tuple[AccountStatus, str]:
+def _classify_imap_error(
+    exc: Exception,
+    stage: str = "connect",
+    *,
+    retry_exhausted: bool = False,
+) -> tuple[AccountStatus, str]:
     if isinstance(exc, imaplib.IMAP4.error):
         return AccountStatus.AUTH_FAILED, "邮箱鉴权失败，请检查授权码或应用专用密码"
-    if isinstance(exc, (TimeoutError, socket.timeout)):
-        return AccountStatus.TIMEOUT, "连接邮箱服务器超时"
+    if isinstance(exc, TimeoutError):
+        details = {
+            "connect": "连接邮箱服务器超时",
+            "tls": "TLS 握手超时，请检查网络或代理",
+            "login": "登录邮箱超时，请稍后重试",
+            "list_folders": "读取邮箱文件夹超时",
+            "select_folder": "打开邮件文件夹超时",
+            "search": "搜索邮件目录超时",
+            "download_messages": "下载邮件内容超时",
+            "post_action": "执行邮件后处理超时",
+        }
+        detail = details.get(stage, "收取邮件超时")
+        if retry_exhausted:
+            detail += "，自动重试后仍未完成"
+        return AccountStatus.TIMEOUT, detail
     if isinstance(exc, ssl.SSLError):
         return AccountStatus.NETWORK_ERROR, "TLS 连接失败，请检查服务器与加密模式"
     if isinstance(exc, OSError):
         return AccountStatus.NETWORK_ERROR, "无法连接邮箱服务器"
     return AccountStatus.UNKNOWN_ERROR, "收件时发生未知错误"
+
+
+def _set_connection_timeout(connection: imaplib.IMAP4, timeout: float) -> None:
+    sock = getattr(connection, "sock", None)
+    if sock is not None and hasattr(sock, "settimeout"):
+        sock.settimeout(timeout)
+
+
+def _abort_connection(connection: imaplib.IMAP4) -> None:
+    shutdown = getattr(connection, "shutdown", None)
+    if callable(shutdown):
+        with suppress(Exception):
+            shutdown()
+        return
+    sock = getattr(connection, "sock", None)
+    if sock is not None:
+        with suppress(OSError):
+            sock.close()
 
 
 def _proxy_imap_connection(

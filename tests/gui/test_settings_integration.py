@@ -5,7 +5,8 @@ import sqlite3
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QDialog, QMessageBox
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from mailbox_manager.domain.models import (
     Group,
@@ -245,6 +246,62 @@ def test_main_window_removes_legacy_one_shot_credentials_from_settings(
     assert window._proxy_fetch_enabled is True
 
 
+def test_appearance_controls_round_trip_and_preview(qtbot) -> None:
+    dialog = EnterpriseSettingsDialog(
+        {
+            "dark_theme": True,
+            "font_family": "Microsoft YaHei UI",
+            "font_size": 13,
+            "font_weight": 600,
+        }
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.font_size.value() == 13
+    assert dialog.font_weight.currentData() == 600
+    assert dialog.values()["dark_theme"] is True
+    assert dialog.values()["font_size"] == 13
+    assert dialog.values()["font_weight"] == 600
+    assert dialog.font_preview.font().pointSize() == 13
+    assert dialog.font_preview.font().weight() == QFont.Weight.DemiBold
+
+
+def test_theme_toggle_preserves_saved_font_preferences(qtbot, tmp_path) -> None:
+    database = Database(tmp_path / "appearance-settings.db")
+    database.initialize()
+    cipher = CredentialCipher.from_raw_key(b"A" * 32)
+    settings = SettingsRepository(database)
+    settings.set(
+        "ui_preferences",
+        {
+            "dark_theme": False,
+            "font_family": "",
+            "font_size": 12,
+            "font_weight": 500,
+        },
+    )
+    window = MainWindow(
+        AccountRepository(database, cipher),
+        MessageRepository(database),
+        settings=settings,
+    )
+    qtbot.addWidget(window)
+
+    window.toggle_theme()
+
+    saved = settings.get("ui_preferences", {})
+    assert saved == {
+        "dark_theme": True,
+        "font_family": "",
+        "font_size": 12,
+        "font_weight": 500,
+    }
+    app = QApplication.instance()
+    assert app is not None
+    assert app.font().pointSize() == 12
+    assert app.font().weight() == QFont.Weight.Medium
+
+
 def test_open_settings_uses_schedule_for_current_group(
     qtbot, tmp_path, monkeypatch
 ) -> None:
@@ -299,6 +356,10 @@ def test_open_settings_uses_schedule_for_current_group(
     assert window._selected_group_id() == selected_group_id
     assert captured == [
         {
+            "dark_theme": False,
+            "font_family": "",
+            "font_size": 10,
+            "font_weight": 500,
             "schedule_enabled": True,
             "schedule_interval": 37,
         }

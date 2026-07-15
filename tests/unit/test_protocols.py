@@ -145,6 +145,52 @@ def test_imap_client_batches_message_download_round_trips() -> None:
     assert fake.fetch_calls == 3
 
 
+def test_imap_client_reconnects_once_after_transient_download_timeout() -> None:
+    created: list[FakeImap] = []
+
+    class TransientTimeoutImap(FakeImap):
+        def uid(self, command: str, *args):
+            if command.casefold() == "fetch" and len(created) == 1:
+                raise TimeoutError("provider response stalled")
+            return super().uid(command, *args)
+
+        def shutdown(self):
+            self.closed = True
+
+    def factory(*_args, **_kwargs):
+        connection = TransientTimeoutImap()
+        created.append(connection)
+        return connection
+
+    result = ImapClient(_imap_account(), connection_factory=factory).fetch_messages(
+        FetchRequest(max_messages=1)
+    )
+
+    assert result.status is AccountStatus.SUCCESS
+    assert len(result.messages) == 1
+    assert len(created) == 2
+    assert created[0].closed is True
+
+
+def test_imap_client_reports_the_timeout_stage_without_provider_details() -> None:
+    class DownloadTimeoutImap(FakeImap):
+        def uid(self, command: str, *args):
+            if command.casefold() == "fetch":
+                raise TimeoutError("private provider diagnostics")
+            return super().uid(command, *args)
+
+        def shutdown(self):
+            self.closed = True
+
+    result = ImapClient(
+        _imap_account(), connection_factory=DownloadTimeoutImap
+    ).fetch_messages(FetchRequest(max_messages=1))
+
+    assert result.status is AccountStatus.TIMEOUT
+    assert "下载邮件内容超时" in result.detail
+    assert "private provider diagnostics" not in result.detail
+
+
 def test_imap_client_classifies_authentication_failure() -> None:
     class RejectedImap(FakeImap):
         def login(self, _username: str, _secret: str):
@@ -174,7 +220,12 @@ def test_graph_client_exchanges_refresh_token_and_fetches_messages() -> None:
                     {
                         "id": "graph-1",
                         "subject": "验证码",
-                        "from": {"emailAddress": {"address": "security@example.com"}},
+                        "from": {
+                            "emailAddress": {
+                                "name": "Security Team",
+                                "address": "security@example.com",
+                            }
+                        },
                         "toRecipients": [{"emailAddress": {"address": "owner@outlook.com"}}],
                         "receivedDateTime": "2026-07-13T10:00:00Z",
                         "body": {"contentType": "html", "content": "<p>Code <b>889900</b></p>"},
@@ -199,6 +250,8 @@ def test_graph_client_exchanges_refresh_token_and_fetches_messages() -> None:
     result = client.fetch_messages(FetchRequest(max_messages=5))
 
     assert result.status is AccountStatus.SUCCESS
+    assert result.messages[0].sender_name == "Security Team"
+    assert result.messages[0].sender_display == "Security Team <security@example.com>"
     assert result.messages[0].catch_all_recipient == "alias@outlook.com"
     assert "889900" in result.messages[0].matched_values
     assert "<b>889900</b>" in result.messages[0].web_html_body

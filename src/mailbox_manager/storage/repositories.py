@@ -409,13 +409,14 @@ class MessageRepository:
                 connection.execute(
                     """
                     INSERT INTO messages (
-                        account_id, provider_message_id, folder, subject, sender,
+                        account_id, provider_message_id, folder, subject, sender, sender_name,
                         recipients_json, catch_all_recipient, received_at, text_body,
                         html_body, web_html_body, matched_values_json, eml_path, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(account_id, provider_message_id, folder) DO UPDATE SET
                         subject = excluded.subject,
                         sender = excluded.sender,
+                        sender_name = excluded.sender_name,
                         recipients_json = excluded.recipients_json,
                         catch_all_recipient = excluded.catch_all_recipient,
                         received_at = excluded.received_at,
@@ -440,6 +441,7 @@ class MessageRepository:
                         message.folder,
                         message.subject[:2000],
                         message.sender,
+                        message.sender_name[:500],
                         json.dumps(message.recipients, ensure_ascii=False),
                         message.catch_all_recipient,
                         message.received_at.isoformat() if message.received_at else None,
@@ -544,11 +546,12 @@ class MessageRepository:
         clauses = [
             "(m.subject LIKE ? ESCAPE '\\' COLLATE NOCASE "
             "OR m.sender LIKE ? ESCAPE '\\' COLLATE NOCASE "
+            "OR m.sender_name LIKE ? ESCAPE '\\' COLLATE NOCASE "
             "OR m.recipients_json LIKE ? ESCAPE '\\' COLLATE NOCASE "
             "OR m.text_body LIKE ? ESCAPE '\\' COLLATE NOCASE "
             "OR m.html_body LIKE ? ESCAPE '\\' COLLATE NOCASE)"
         ]
-        params: list[object] = [pattern] * 5
+        params: list[object] = [pattern] * 6
         if account_id is not None:
             clauses.append("m.account_id = ?")
             params.append(account_id)
@@ -709,6 +712,7 @@ class MessageRepository:
     def _to_message(
         row: object, attachments: tuple[MailAttachment, ...] = ()
     ) -> MailMessage:
+        row_keys = set(row.keys())  # type: ignore[attr-defined]
         return MailMessage(
             message_id=row["id"],  # type: ignore[index]
             account_id=row["account_id"],  # type: ignore[index]
@@ -717,6 +721,9 @@ class MessageRepository:
             transport_id="",
             subject=row["subject"],  # type: ignore[index]
             sender=row["sender"],  # type: ignore[index]
+            sender_name=(
+                row["sender_name"] if "sender_name" in row_keys else ""  # type: ignore[index]
+            ),
             recipients=tuple(json.loads(row["recipients_json"])),  # type: ignore[index]
             catch_all_recipient=row["catch_all_recipient"],  # type: ignore[index]
             received_at=_parse_datetime(row["received_at"]),  # type: ignore[index]
