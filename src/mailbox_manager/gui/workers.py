@@ -296,6 +296,7 @@ class UpdateCheckWorker(QRunnable):
 
 
 class UpdateInstallSignals(QObject):
+    status = Signal(str)
     result = Signal(object, object)
     finished = Signal()
 
@@ -312,7 +313,9 @@ class UpdateInstallWorker(QRunnable):
     @Slot()
     def run(self) -> None:
         try:
+            self.signals.status.emit("正在校验暂存更新文件…")
             plan = self.service.create_installer_plan(self.staged)
+            self.signals.status.emit("正在启动外部安装助手…")
             self.service.launch_installer(plan)
             self.signals.result.emit(plan, None)
         except Exception as exc:

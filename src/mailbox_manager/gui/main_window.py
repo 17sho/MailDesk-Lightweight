@@ -250,7 +250,6 @@ class MainWindow(QMainWindow):
         self._staged_update: StagedUpdate | None = None
         self._update_dialog: UpdateDialog | None = None
         self._update_check_worker: UpdateCheckWorker | None = None
-        self._update_install_check_worker: UpdateCheckWorker | None = None
         self._update_install_worker: UpdateInstallWorker | None = None
         self._update_download_worker: UpdateDownloadWorker | None = None
         self._update_operation_id: str | None = None
@@ -3239,9 +3238,6 @@ class MainWindow(QMainWindow):
                 "正在校验安装文件",
                 "正在后台核对新版全部文件，完成后将自动关闭并重新启动。",
             )
-        elif self._update_install_check_worker is not None:
-            dialog.primary_button.setEnabled(False)
-            dialog.primary_button.setText("正在复核发布状态…")
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
@@ -3404,10 +3400,7 @@ class MainWindow(QMainWindow):
             if dialog is not None:
                 dialog.set_download_error("更新版本状态已变化，请重新检查并下载。")
             return
-        if (
-            self._update_install_check_worker is not None
-            or self._update_install_worker is not None
-        ):
+        if self._update_install_worker is not None:
             return
         answer = QMessageBox.question(
             self,
@@ -3421,83 +3414,21 @@ class MainWindow(QMainWindow):
             if dialog is not None:
                 dialog.set_download_complete()
             return
-        worker = UpdateCheckWorker(service)
-        self._update_install_check_worker = worker
-        worker.signals.result.connect(self._on_update_install_revalidated)
-        worker.signals.finished.connect(self._on_update_install_check_finished)
         self.check_updates_action.setEnabled(False)
         if dialog is not None:
             dialog.set_install_status(
-                "正在复核发布状态",
-                "正在确认正式版未被撤回，完成后继续校验本地安装文件。",
+                "正在准备安装",
+                "正在后台核对已签名的本地更新文件，随后启动安装助手。",
             )
-        self.statusBar().showMessage("正在复核更新签名与发布状态…")
-        self._pool.start(worker)
+        self.statusBar().showMessage("正在校验更新文件并启动安装助手…")
+        logging.getLogger("maildesk.update").info(
+            "User confirmed installation of v%s (%s)",
+            staged.update.release.version,
+            staged.update.install_mode.value,
+        )
+        self._launch_staged_update(service, staged, dialog)
 
-    def _on_update_install_revalidated(self, update: object, error: object) -> None:
-        service = self._update_service
-        staged = self._staged_update
-        dialog = self._update_dialog
-        if service is None or staged is None:
-            return
-        if error is not None:
-            logging.getLogger(__name__).warning(
-                "Final update validation failed: %s",
-                error,
-            )
-            message = (
-                str(error)
-                if isinstance(error, UpdateError)
-                else "无法复核更新发布状态，请检查网络后重试。"
-            )
-            QMessageBox.warning(self, "暂不能安装更新", message)
-            if dialog is not None:
-                dialog.set_download_complete()
-            return
-        if update is None:
-            service.discard_staged_update(staged)
-            self._staged_update = None
-            self._update_info = None
-            self._update_download_identity = None
-            self.update_toolbar_action.setVisible(False)
-            self.update_tool_button.hide()
-            QMessageBox.warning(
-                self,
-                "更新已撤回",
-                "该版本已不再是官方最新正式版，已阻止安装并清理暂存文件。",
-            )
-            if dialog is not None:
-                dialog.reject()
-            return
-        if (
-            not isinstance(update, UpdateInfo)
-            or self._update_identity(update) != self._update_identity(staged.update)
-        ):
-            service.discard_staged_update(staged)
-            self._staged_update = None
-            self._update_download_identity = None
-            if isinstance(update, UpdateInfo):
-                self._update_info = update
-                self._set_update_button_state("available")
-                if dialog is not None:
-                    dialog.set_release(
-                        service.current_version,
-                        update.release.version,
-                        update.release.notes,
-                    )
-            else:
-                self._update_info = None
-                self.update_toolbar_action.setVisible(False)
-                self.update_tool_button.hide()
-            QMessageBox.warning(
-                self,
-                "版本状态已变化",
-                "官方发布内容已变化，旧暂存包已清理，请重新下载。",
-            )
-            return
-        self._launch_revalidated_update(service, staged, dialog)
-
-    def _launch_revalidated_update(
+    def _launch_staged_update(
         self,
         service: UpdateService,
         staged: StagedUpdate,
@@ -3507,6 +3438,7 @@ class MainWindow(QMainWindow):
             return
         worker = UpdateInstallWorker(service, staged)
         self._update_install_worker = worker
+        worker.signals.status.connect(self._on_update_installer_status)
         worker.signals.result.connect(self._on_update_installer_result)
         worker.signals.finished.connect(self._on_update_installer_finished)
         if dialog is not None:
@@ -3515,8 +3447,20 @@ class MainWindow(QMainWindow):
                 "正在后台核对新版全部文件，完成后将自动关闭并重新启动。",
             )
         self.statusBar().showMessage("正在校验更新文件并启动安装助手…")
-        logging.getLogger(__name__).info("Preparing verified update installer")
+        logging.getLogger("maildesk.update").info(
+            "Preparing verified update installer from %s",
+            staged.staging_root,
+        )
         self._pool.start(worker)
+
+    def _on_update_installer_status(self, message: str) -> None:
+        logging.getLogger("maildesk.update").info("%s", message)
+        self.statusBar().showMessage(message)
+        if self._update_dialog is not None:
+            self._update_dialog.set_install_status(
+                message,
+                "请稍候，安装助手接管后 MailDesk 会自动关闭并重新启动。",
+            )
 
     def _on_update_installer_result(self, plan: object, error: object) -> None:
         service = self._update_service
@@ -3526,7 +3470,7 @@ class MainWindow(QMainWindow):
             return
         if error is not None:
             exc = error
-            logging.getLogger(__name__).error(
+            logging.getLogger("maildesk.update").error(
                 "Unable to start update installer: %s",
                 exc,
             )
@@ -3542,7 +3486,9 @@ class MainWindow(QMainWindow):
             elif dialog is not None:
                 dialog.set_download_complete()
             return
-        logging.getLogger(__name__).info("Update installer accepted the hand-off")
+        logging.getLogger("maildesk.update").info(
+            "Update installer accepted the hand-off"
+        )
         if dialog is not None:
             dialog.accept()
         self.statusBar().showMessage("安装助手已接管，正在退出 MailDesk…")
@@ -3550,14 +3496,6 @@ class MainWindow(QMainWindow):
 
     def _on_update_installer_finished(self) -> None:
         self._update_install_worker = None
-
-    def _on_update_install_check_finished(self) -> None:
-        self._update_install_check_worker = None
-        if self.isVisible():
-            self.check_updates_action.setEnabled(
-                self._update_service is not None
-                and self._update_install_worker is None
-            )
 
     def _set_update_button_state(
         self, state: str, percent: int | None = None

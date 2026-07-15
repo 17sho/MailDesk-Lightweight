@@ -132,7 +132,7 @@ def test_application_composition_enables_startup_update_checks(qtbot, tmp_path) 
     window._startup_update_timer.stop()
 
     assert window._update_service is not None
-    assert window._update_service.current_version == "0.3.5"
+    assert window._update_service.current_version == "0.3.6"
     assert window._update_service.updates_dir == paths.updates
     assert window.check_updates_action.isEnabled()
 
@@ -256,7 +256,7 @@ def test_install_file_verification_does_not_block_the_gui(
 
     assert window._update_install_worker is not None
     assert window._update_dialog.primary_button.text() == "正在准备安装…"
-    assert "后台核对" in window._update_dialog.progress_detail_label.text()
+    assert "安装助手接管" in window._update_dialog.progress_detail_label.text()
     assert quit_requested == []
 
     service.allow_install.set()
@@ -298,7 +298,7 @@ def test_stale_download_result_cannot_replace_active_update(qtbot, tmp_path) -> 
     assert window._update_info is new_update
 
 
-def test_final_install_check_blocks_a_withdrawn_release(
+def test_install_does_not_repeat_network_check_after_signed_download(
     qtbot, tmp_path, monkeypatch
 ) -> None:
     window, _settings = _window(qtbot, tmp_path)
@@ -307,31 +307,26 @@ def test_final_install_check_blocks_a_withdrawn_release(
     update = _update_info()
     staged = StagedUpdate(
         update,
-        tmp_path / "withdrawn-stage",
-        tmp_path / "withdrawn-stage" / "MailDesk.exe",
+        tmp_path / "verified-stage",
+        tmp_path / "verified-stage" / "MailDesk.exe",
     )
     window._update_info = update
     window._staged_update = staged
     window._update_download_identity = window._update_identity(update)
     window._show_update_dialog()
     service.check_result = None
-    warnings: list[bool] = []
+    quit_requested: list[bool] = []
     monkeypatch.setattr(
         QMessageBox,
         "question",
         lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
     )
-    monkeypatch.setattr(
-        QMessageBox,
-        "warning",
-        lambda *args, **kwargs: warnings.append(True),
-    )
+    monkeypatch.setattr(window, "request_quit", lambda: quit_requested.append(True))
 
     window._confirm_update_install("0.4.0")
-    qtbot.waitUntil(lambda: window._update_install_check_worker is None, timeout=1500)
+    qtbot.waitUntil(lambda: service.launched_plan is not None, timeout=1500)
+    qtbot.waitUntil(lambda: quit_requested == [True], timeout=1500)
 
     assert service.created_with is staged
-    assert service.launched_plan is None
-    assert window._staged_update is None
-    assert window.update_tool_button.isHidden()
-    assert warnings == [True]
+    assert service.launched_plan is not None
+    assert window._staged_update is staged
