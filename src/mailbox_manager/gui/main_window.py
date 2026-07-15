@@ -83,6 +83,13 @@ from mailbox_manager.gui.account_model import (
     AccountTableView,
 )
 from mailbox_manager.gui.add_account_dialog import AddAccountDialog
+from mailbox_manager.gui.close_dialog import (
+    CLOSE_ACTION_ASK,
+    CLOSE_ACTION_EXIT,
+    CLOSE_ACTION_TRAY,
+    CLOSE_ACTIONS,
+    CloseWindowDialog,
+)
 from mailbox_manager.gui.compose_dialog import ComposeDialog
 from mailbox_manager.gui.content_filter_dialog import ContentFilterDialog
 from mailbox_manager.gui.dashboard import DashboardWidget, configured_quick_action_ids
@@ -3818,23 +3825,75 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._save_splitter_sizes()
-        if self._tray is not None and self._tray.isVisible() and not self._force_close:
-            self.hide()
-            self._tray.showMessage(
-                "MailDesk",
-                "程序已最小化到系统托盘，将继续静默运行。",
-                QSystemTrayIcon.MessageIcon.Information,
-                4000,
-            )
-            event.ignore()
+        tray_available = self._tray is not None and self._tray.isVisible()
+        if not self._force_close:
+            action = self._configured_close_action()
+            if not tray_available and action in {
+                CLOSE_ACTION_ASK,
+                CLOSE_ACTION_TRAY,
+            }:
+                action = CLOSE_ACTION_EXIT
+            if action == CLOSE_ACTION_ASK:
+                dialog = CloseWindowDialog(self, tray_available=tray_available)
+                if (
+                    dialog.exec() != CloseWindowDialog.DialogCode.Accepted
+                    or dialog.selected_action is None
+                ):
+                    event.ignore()
+                    return
+                action = dialog.selected_action
+                if dialog.remember_choice:
+                    self._persist_close_action(action)
+            if action == CLOSE_ACTION_TRAY and tray_available:
+                self.hide()
+                self._tray.showMessage(
+                    "MailDesk",
+                    "程序已最小化到系统托盘，将继续静默运行。",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    4000,
+                )
+                event.ignore()
+                return
+            if action == CLOSE_ACTION_EXIT:
+                self._force_close = True
+                if self._tray is not None:
+                    self._tray.hide()
+
+        self._shutdown_before_close()
+        event.accept()
+        if self._force_close and self._tray is not None:
+            application = QApplication.instance()
+            if application is not None:
+                QTimer.singleShot(0, application.quit)
+
+    def _configured_close_action(self) -> str:
+        values = (
+            self._settings.get("enterprise_ui", {})
+            if self._settings is not None
+            else {}
+        )
+        action = (
+            str(values.get("close_action", CLOSE_ACTION_ASK))
+            if isinstance(values, dict)
+            else CLOSE_ACTION_ASK
+        )
+        return action if action in CLOSE_ACTIONS else CLOSE_ACTION_ASK
+
+    def _persist_close_action(self, action: str) -> None:
+        if self._settings is None or action not in CLOSE_ACTIONS:
             return
+        values = self._settings.get("enterprise_ui", {})
+        values = dict(values) if isinstance(values, dict) else {}
+        values["close_action"] = action
+        self._settings.set("enterprise_ui", values)
+
+    def _shutdown_before_close(self) -> None:
         self.stop_fetch()
         if self._update_download_worker is not None:
             self._update_download_worker.cancel()
         self._translation_generation += 1
         self._active_translation_generation = None
         self.message_body.shutdown()
-        event.accept()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

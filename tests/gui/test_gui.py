@@ -6,6 +6,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QAbstractAnimation, Qt, QUrl
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QAbstractSpinBox,
@@ -34,6 +35,11 @@ from mailbox_manager.domain.models import (
 )
 from mailbox_manager.gui.account_model import AccountTableModel
 from mailbox_manager.gui.add_account_dialog import AddAccountDialog
+from mailbox_manager.gui.close_dialog import (
+    CLOSE_ACTION_ASK,
+    CLOSE_ACTION_TRAY,
+    CloseWindowDialog,
+)
 from mailbox_manager.gui.compose_dialog import ComposeDialog
 from mailbox_manager.gui.content_filter_dialog import ContentFilterDialog
 from mailbox_manager.gui.import_dialog import ImportPreviewDialog
@@ -323,9 +329,77 @@ def test_settings_dialog_uses_responsive_navigation_and_linked_controls(qtbot) -
         "content_filter",
     ]
     assert dialog.values()["proxy_fetch_enabled"] is False
+    assert dialog.values()["close_action"] == CLOSE_ACTION_ASK
     dialog.navigation.setCurrentRow(7)
     assert dialog.pages.currentIndex() == 7
     assert dialog.update_check_button.text() == "检查系统更新"
+
+
+def test_close_window_dialog_returns_choice_and_remember_flag(qtbot) -> None:
+    dialog = CloseWindowDialog(tray_available=True)
+    qtbot.addWidget(dialog)
+    dialog.remember_checkbox.setChecked(True)
+
+    dialog.tray_button.click()
+
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert dialog.selected_action == CLOSE_ACTION_TRAY
+    assert dialog.remember_choice is True
+
+
+def test_close_choice_can_be_remembered_and_minimizes_to_tray(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    database = Database(tmp_path / "close-choice.db")
+    database.initialize()
+    cipher = CredentialCipher.from_raw_key(b"C" * 32)
+    settings = SettingsRepository(database)
+    window = MainWindow(
+        AccountRepository(database, cipher),
+        MessageRepository(database),
+        settings=settings,
+    )
+    qtbot.addWidget(window)
+
+    class FakeTray:
+        def __init__(self) -> None:
+            self.messages: list[str] = []
+
+        def isVisible(self) -> bool:
+            return True
+
+        def showMessage(self, _title, message, *_args) -> None:
+            self.messages.append(message)
+
+        def hide(self) -> None:
+            pass
+
+    class AcceptedCloseDialog:
+        DialogCode = QDialog.DialogCode
+
+        def __init__(self, _parent=None, *, tray_available=True) -> None:
+            assert tray_available is True
+            self.selected_action = CLOSE_ACTION_TRAY
+            self.remember_choice = True
+
+        def exec(self) -> QDialog.DialogCode:
+            return QDialog.DialogCode.Accepted
+
+    tray = FakeTray()
+    window._tray = tray  # type: ignore[assignment]
+    monkeypatch.setattr(
+        "mailbox_manager.gui.main_window.CloseWindowDialog",
+        AcceptedCloseDialog,
+    )
+    event = QCloseEvent()
+
+    window.closeEvent(event)
+
+    assert event.isAccepted() is False
+    assert tray.messages == ["程序已最小化到系统托盘，将继续静默运行。"]
+    saved = settings.get("enterprise_ui", {})
+    assert isinstance(saved, dict)
+    assert saved["close_action"] == CLOSE_ACTION_TRAY
 
 
 def test_add_proxy_dialog_builds_named_encrypted_proxy_input(qtbot) -> None:

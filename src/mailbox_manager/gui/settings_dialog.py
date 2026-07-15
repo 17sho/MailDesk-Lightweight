@@ -27,6 +27,11 @@ from PySide6.QtWidgets import (
 
 from mailbox_manager import __version__
 from mailbox_manager.domain.models import FetchRequest, PostAction, ProxyType
+from mailbox_manager.gui.close_dialog import (
+    CLOSE_ACTION_ASK,
+    CLOSE_ACTION_EXIT,
+    CLOSE_ACTION_TRAY,
+)
 from mailbox_manager.gui.dashboard import (
     QUICK_ACTION_DEFINITIONS,
     configured_quick_action_ids,
@@ -435,6 +440,21 @@ class EnterpriseSettingsDialog(QDialog):
         hint.setObjectName("translationProviderLabel")
         hint.setWordWrap(True)
         self._add_row(behavior_form, "优先级", hint)
+
+        close_form = self._add_card(
+            layout,
+            "关闭窗口",
+            "决定点击主窗口关闭按钮时，是保留后台任务还是完全退出。",
+        )
+        self.close_action = QComboBox()
+        self.close_action.addItem("每次询问", CLOSE_ACTION_ASK)
+        self.close_action.addItem("最小化到系统托盘", CLOSE_ACTION_TRAY)
+        self.close_action.addItem("直接退出应用", CLOSE_ACTION_EXIT)
+        selected_close_action = str(values.get("close_action", CLOSE_ACTION_ASK))
+        self.close_action.setCurrentIndex(
+            max(0, self.close_action.findData(selected_close_action))
+        )
+        self._add_row(close_form, "关闭按钮操作", self.close_action)
         layout.addStretch(1)
         return page
 
@@ -786,4 +806,5 @@ class EnterpriseSettingsDialog(QDialog):
             "dashboard_quick_actions": [
                 combo.currentData() for combo in self.dashboard_quick_action_boxes
             ],
+            "close_action": self.close_action.currentData(),
         }

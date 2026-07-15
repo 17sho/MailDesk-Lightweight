@@ -33,6 +33,16 @@ def test_windows_build_excludes_unused_qml_payload_and_keeps_webengine() -> None
     )
     assert should_include_qt_payload("PySide6/QtWebEngineWidgets.pyd")
     assert should_include_qt_payload("PySide6/resources/qtwebengine_resources.pak")
+    assert should_include_qt_payload("PySide6/Qt6WebEngineCore.dll")
+    assert should_include_qt_payload("PySide6/Qt6Quick.dll")
+    assert not should_include_qt_payload("PySide6/Qt6Quick3D.dll")
+    assert not should_include_qt_payload("PySide6/Qt6Pdf.dll")
+    assert not should_include_qt_payload("PySide6/QtQuick3D.pyd")
+    assert not should_include_qt_payload(
+        "PySide6/plugins/qmltooling/qmldbg_profiler.dll"
+    )
+    assert should_include_qt_payload("PySide6/translations/qtbase_zh_CN.qm")
+    assert not should_include_qt_payload("PySide6/translations/qtbase_de.qm")
 
 
 def test_macos_release_names_normalize_native_architectures() -> None:
@@ -62,7 +72,7 @@ def test_pyinstaller_spec_embeds_release_version_resource() -> None:
     )
 
     assert 'version=str(ROOT / "assets" / "version_info.txt")' in spec
-    assert "filevers=(0, 3, 4, 0)" in version_info
-    assert "prodvers=(0, 3, 4, 0)" in version_info
-    assert "StringStruct(u'FileVersion', u'0.3.4.0')" in version_info
-    assert "StringStruct(u'ProductVersion', u'0.3.4.0')" in version_info
+    assert "filevers=(0, 3, 5, 0)" in version_info
+    assert "prodvers=(0, 3, 5, 0)" in version_info
+    assert "StringStruct(u'FileVersion', u'0.3.5.0')" in version_info
+    assert "StringStruct(u'ProductVersion', u'0.3.5.0')" in version_info

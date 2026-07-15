@@ -66,6 +66,13 @@ _PATHS = {
     """,
     "play": '<path d="M8 5.5v13l10-6.5z" fill="{color}" stroke="none"/>',
     "stop": '<rect x="7" y="7" width="10" height="10" rx="1.5" fill="{color}" stroke="none"/>',
+    "minimize": """
+        <path d="M9 4H4v5M15 20h5v-5M4 4l6 6M20 20l-6-6"/>
+    """,
+    "logout": """
+        <path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5"/>
+        <path d="M14 8l4 4-4 4m4-4H8"/>
+    """,
     "moon": '<path d="M19 15.5A8 8 0 0 1 8.5 5a8.2 8.2 0 1 0 10.5 10.5z"/>',
     "sun": """
         <circle cx="12" cy="12" r="3.5"/>

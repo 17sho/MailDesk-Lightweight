@@ -1054,6 +1054,34 @@ QToolTip {
     border: 0;
     padding: 5px 8px;
 }
+QDialog#closeWindowDialog { background: transparent; }
+QFrame#closeDialogCard {
+    background: #ffffff;
+    border: 1px solid #dce3ec;
+    border-radius: 20px;
+}
+QLabel#closeDialogTitle { color: #111827; font-size: 25px; font-weight: 750; }
+QLabel#closeDialogSubtitle { color: #64748b; font-size: 15px; }
+QPushButton#closeDialogDismiss {
+    background: transparent; border: 0; color: #94a3b8;
+    font-size: 28px; padding: 0;
+}
+QPushButton#closeDialogDismiss:hover { background: #f1f5f9; color: #475569; }
+QCommandLinkButton#closeTrayOption, QCommandLinkButton#closeExitOption {
+    background: #ffffff;
+    color: #172033;
+    border: 1px solid #dce3ec;
+    border-radius: 13px;
+    padding: 15px 20px;
+    font-size: 16px;
+    font-weight: 650;
+}
+QCommandLinkButton#closeTrayOption:hover { background: #f8fbff; border-color: #93b9ff; }
+QCommandLinkButton#closeExitOption:hover { background: #fff8f8; border-color: #fca5a5; }
+QCommandLinkButton#closeTrayOption:disabled {
+    background: #f8fafc; color: #94a3b8; border-color: #e2e8f0;
+}
+QCheckBox#closeRememberChoice { color: #526176; font-size: 14px; spacing: 10px; }
 QScrollBar:vertical {
     background: transparent;
     width: 10px;
@@ -2076,6 +2104,34 @@ QMenu::right-arrow {
     right: 10px;
 }
 QToolTip { background: #e5eaf2; color: #0f1520; border: 0; padding: 5px 8px; }
+QDialog#closeWindowDialog { background: transparent; }
+QFrame#closeDialogCard {
+    background: #151d2a;
+    border: 1px solid #334155;
+    border-radius: 20px;
+}
+QLabel#closeDialogTitle { color: #f8fafc; font-size: 25px; font-weight: 750; }
+QLabel#closeDialogSubtitle { color: #94a3b8; font-size: 15px; }
+QPushButton#closeDialogDismiss {
+    background: transparent; border: 0; color: #718096;
+    font-size: 28px; padding: 0;
+}
+QPushButton#closeDialogDismiss:hover { background: #202b3b; color: #d5dce7; }
+QCommandLinkButton#closeTrayOption, QCommandLinkButton#closeExitOption {
+    background: #192332;
+    color: #e5eaf2;
+    border: 1px solid #334155;
+    border-radius: 13px;
+    padding: 15px 20px;
+    font-size: 16px;
+    font-weight: 650;
+}
+QCommandLinkButton#closeTrayOption:hover { background: #172a44; border-color: #3b82f6; }
+QCommandLinkButton#closeExitOption:hover { background: #342027; border-color: #ef4444; }
+QCommandLinkButton#closeTrayOption:disabled {
+    background: #121a26; color: #566277; border-color: #273244;
+}
+QCheckBox#closeRememberChoice { color: #aab4c5; font-size: 14px; spacing: 10px; }
 QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
 QScrollBar::handle:vertical { background: #3a475c; border-radius: 4px; min-height: 28px; }
 QScrollBar::handle:vertical:hover { background: #526177; }

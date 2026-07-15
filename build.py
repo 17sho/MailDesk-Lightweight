@@ -17,6 +17,43 @@ SPEC_FILE = ROOT / "mailbox-manager.spec"
 WEBENGINE_LOCALES = frozenset(
     {"en-gb.pak", "en-us.pak", "zh-cn.pak", "zh-tw.pak"}
 )
+WINDOWS_QT_PYTHON_BINDINGS = frozenset(
+    {
+        "qtcharts.pyd",
+        "qtcore.pyd",
+        "qtgui.pyd",
+        "qtnetwork.pyd",
+        "qtprintsupport.pyd",
+        "qtsvg.pyd",
+        "qtwebchannel.pyd",
+        "qtwebenginecore.pyd",
+        "qtwebenginewidgets.pyd",
+        "qtwidgets.pyd",
+    }
+)
+WINDOWS_QT_RUNTIME_DLLS = frozenset(
+    {
+        "qt6charts.dll",
+        "qt6core.dll",
+        "qt6gui.dll",
+        "qt6network.dll",
+        "qt6opengl.dll",
+        "qt6openglwidgets.dll",
+        "qt6positioning.dll",
+        "qt6printsupport.dll",
+        "qt6qml.dll",
+        "qt6qmlmeta.dll",
+        "qt6qmlmodels.dll",
+        "qt6qmlworkerscript.dll",
+        "qt6quick.dll",
+        "qt6quickwidgets.dll",
+        "qt6svg.dll",
+        "qt6webchannel.dll",
+        "qt6webenginecore.dll",
+        "qt6webenginewidgets.dll",
+        "qt6widgets.dll",
+    }
+)
 
 
 def should_include_qt_payload(destination: str) -> bool:
@@ -29,6 +66,10 @@ def should_include_qt_payload(destination: str) -> bool:
     # exceed Windows MAX_PATH inside the verified updater staging directory.
     if "pyside6/qml/" in normalized:
         return False
+    if "pyside6/plugins/qmltooling/" in normalized:
+        return False
+    if "pyside6/plugins/platforminputcontexts/qtvirtualkeyboard" in normalized:
+        return False
     if "pyside6/resources/" in normalized and (
         ".debug." in filename
         or filename.startswith("qtwebengine_devtools_resources")
@@ -36,6 +77,20 @@ def should_include_qt_payload(destination: str) -> bool:
         return False
     if "pyside6/translations/qtwebengine_locales/" in normalized:
         return filename in WEBENGINE_LOCALES
+    if "pyside6/translations/" in normalized and filename.endswith(".qm"):
+        return filename.endswith(("_zh_cn.qm", "_zh_tw.qm"))
+    if normalized.startswith("pyside6/"):
+        relative = normalized.removeprefix("pyside6/")
+        if "/" not in relative and filename.endswith(".pyd"):
+            return filename in WINDOWS_QT_PYTHON_BINDINGS
+        if (
+            "/" not in relative
+            and filename.startswith("qt6")
+            and filename.endswith(".dll")
+        ):
+            return filename in WINDOWS_QT_RUNTIME_DLLS
+        if relative == "pyside6qml.abi3.dll":
+            return False
     return True
 
 
