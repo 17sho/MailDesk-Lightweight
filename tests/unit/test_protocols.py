@@ -108,6 +108,43 @@ def test_imap_client_zero_limit_fetches_all_matching_messages() -> None:
     ]
 
 
+def test_imap_client_batches_message_download_round_trips() -> None:
+    class BatchImap(FakeImap):
+        def __init__(self, *_args, **_kwargs) -> None:
+            super().__init__()
+            self.fetch_calls = 0
+
+        def uid(self, command: str, *args):
+            if command.casefold() == "search":
+                return "OK", [b" ".join(str(value).encode() for value in range(1, 61))]
+            self.fetch_calls += 1
+            identifiers = args[0].split(b",")
+            responses = []
+            for identifier in identifiers:
+                raw = (
+                    b"Subject: batched "
+                    + identifier
+                    + b"\r\nMessage-ID: <batch-"
+                    + identifier
+                    + b"@example.com>\r\n\r\nBody"
+                )
+                responses.append(
+                    (b"1 (UID " + identifier + b" RFC822 {80})", raw)
+                )
+            return "OK", responses
+
+    fake = BatchImap()
+    result = ImapClient(
+        _imap_account(), connection_factory=lambda *_args, **_kwargs: fake
+    ).fetch_messages(FetchRequest(max_messages=60))
+
+    assert result.status is AccountStatus.SUCCESS
+    assert len(result.messages) == 60
+    assert result.messages[0].subject == "batched 60"
+    assert result.messages[-1].subject == "batched 1"
+    assert fake.fetch_calls == 3
+
+
 def test_imap_client_classifies_authentication_failure() -> None:
     class RejectedImap(FakeImap):
         def login(self, _username: str, _secret: str):

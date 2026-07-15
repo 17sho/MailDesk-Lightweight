@@ -46,7 +46,7 @@ def test_database_migrates_existing_v1_accounts_and_creates_enterprise_tables(tm
 
     assert {"smtp_host", "smtp_port", "oauth_provider", "proxy_id", "web_auth_status"} <= columns
     assert {"proxies", "schedules", "webhooks", "automation_rules"} <= tables
-    assert version == 5
+    assert version == 6
 
 
 def test_group_and_tag_repositories_support_nested_assets(tmp_path) -> None:
@@ -79,11 +79,13 @@ def test_proxy_webhook_schedule_and_rule_secrets_are_encrypted(tmp_path) -> None
 
     proxy_id = proxies.add(
         ProxyConfig(
+            name="默认 SOCKS 节点",
             proxy_type=ProxyType.SOCKS5,
             host="127.0.0.1",
             port=1080,
             username="proxy-user",
             password="proxy-password",
+            is_default=True,
         )
     )
     webhook_id = webhooks.add(
@@ -99,7 +101,23 @@ def test_proxy_webhook_schedule_and_rule_secrets_are_encrypted(tmp_path) -> None
         )
     )
 
-    assert proxies.get(proxy_id).password == "proxy-password"  # type: ignore[union-attr]
+    stored_proxy = proxies.get(proxy_id)
+    assert stored_proxy is not None
+    assert stored_proxy.password == "proxy-password"
+    assert stored_proxy.display_name == "默认 SOCKS 节点"
+    assert stored_proxy.is_default is True
+    second_proxy_id = proxies.add(
+        ProxyConfig(
+            name="新的默认节点",
+            proxy_type=ProxyType.HTTP,
+            host="proxy.example.com",
+            port=8080,
+            is_default=True,
+        )
+    )
+    ordered_proxies = proxies.list_all()
+    assert ordered_proxies[0].proxy_id == second_proxy_id
+    assert [item.is_default for item in ordered_proxies] == [True, False]
     assert webhooks.get(webhook_id).secret == "hook-secret"  # type: ignore[union-attr]
     assert schedules.list_all()[0].schedule_id == schedule_id
     assert rules.list_all()[0].rule_id == rule_id

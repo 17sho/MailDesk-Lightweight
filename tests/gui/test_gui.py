@@ -27,6 +27,8 @@ from mailbox_manager.domain.models import (
     MailMessage,
     PostAction,
     ProtocolType,
+    ProxyConfig,
+    ProxyType,
     SecurityMode,
     Tag,
 )
@@ -37,6 +39,7 @@ from mailbox_manager.gui.content_filter_dialog import ContentFilterDialog
 from mailbox_manager.gui.import_dialog import ImportPreviewDialog
 from mailbox_manager.gui.mail_viewer_dialog import MailViewerDialog
 from mailbox_manager.gui.main_window import MainWindow
+from mailbox_manager.gui.proxy_dialog import AddProxyDialog
 from mailbox_manager.gui.settings_dialog import EnterpriseSettingsDialog
 from mailbox_manager.importers.smart_parser import SmartAccountParser
 from mailbox_manager.services.send_service import (
@@ -49,6 +52,7 @@ from mailbox_manager.storage.crypto import CredentialCipher
 from mailbox_manager.storage.database import Database
 from mailbox_manager.storage.enterprise_repositories import (
     GroupRepository,
+    ProxyRepository,
     SettingsRepository,
     StatisticsRepository,
     TagRepository,
@@ -282,8 +286,8 @@ def test_settings_dialog_uses_responsive_navigation_and_linked_controls(qtbot) -
     qtbot.addWidget(dialog)
 
     assert dialog.minimumWidth() >= 720
-    assert dialog.navigation.count() == 7
-    assert dialog.pages.count() == 7
+    assert dialog.navigation.count() == 8
+    assert dialog.pages.count() == 8
     assert (
         dialog.pages.widget(0).horizontalScrollBarPolicy()
         is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
@@ -319,6 +323,100 @@ def test_settings_dialog_uses_responsive_navigation_and_linked_controls(qtbot) -
         "content_filter",
     ]
     assert dialog.values()["proxy_fetch_enabled"] is False
+    dialog.navigation.setCurrentRow(7)
+    assert dialog.pages.currentIndex() == 7
+    assert dialog.update_check_button.text() == "检查系统更新"
+
+
+def test_add_proxy_dialog_builds_named_encrypted_proxy_input(qtbot) -> None:
+    dialog = AddProxyDialog()
+    qtbot.addWidget(dialog)
+    dialog.name_input.setText("本地 SOCKS")
+    dialog.host_input.setText("127.0.0.1")
+    dialog.port_input.setValue(1080)
+    dialog.username_input.setText("proxy-user")
+    dialog.password_input.setText("proxy-password")
+    dialog.default_proxy.setChecked(True)
+
+    dialog.accept()
+
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert dialog.proxy is not None
+    assert dialog.proxy.name == "本地 SOCKS"
+    assert dialog.proxy.proxy_type is ProxyType.SOCKS5
+    assert dialog.proxy.host == "127.0.0.1"
+    assert dialog.proxy.password == "proxy-password"
+    assert dialog.proxy.is_default is True
+    assert dialog.password_input.echoMode() is QLineEdit.EchoMode.Password
+
+
+def test_settings_buttons_emit_proxy_and_update_requests(qtbot) -> None:
+    dialog = EnterpriseSettingsDialog({"proxy_count": 2})
+    qtbot.addWidget(dialog)
+    proxy_requests: list[bool] = []
+    update_requests: list[bool] = []
+    dialog.addProxyRequested.connect(lambda: proxy_requests.append(True))
+    dialog.updateCheckRequested.connect(lambda: update_requests.append(True))
+
+    dialog.add_proxy_button.click()
+    dialog.update_check_button.click()
+    dialog.set_proxy_count(3)
+
+    assert proxy_requests == [True]
+    assert update_requests == [True]
+    assert dialog.proxy_count_label.text() == "当前已保存 3 个代理"
+
+
+def test_main_window_add_proxy_dialog_persists_encrypted_proxy(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    database = Database(tmp_path / "single-proxy.db")
+    database.initialize()
+    cipher = CredentialCipher.from_raw_key(b"P" * 32)
+    accounts = AccountRepository(database, cipher)
+    proxies = ProxyRepository(database, cipher)
+    window = MainWindow(
+        accounts,
+        MessageRepository(database),
+        proxies=proxies,
+    )
+    qtbot.addWidget(window)
+    expected = ProxyConfig(
+        name="香港节点 1",
+        proxy_type=ProxyType.SOCKS5,
+        host="127.0.0.1",
+        port=1080,
+        username="proxy-user",
+        password="proxy-password",
+        is_default=True,
+    )
+
+    class AcceptedProxyDialog:
+        DialogCode = QDialog.DialogCode
+
+        def __init__(self, _parent=None) -> None:
+            self.proxy = expected
+
+        def exec(self) -> QDialog.DialogCode:
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(
+        "mailbox_manager.gui.main_window.AddProxyDialog",
+        AcceptedProxyDialog,
+    )
+
+    window._show_add_proxy_dialog()
+
+    saved = proxies.list_all()
+    assert len(saved) == 1
+    assert saved[0].display_name == "香港节点 1"
+    assert saved[0].password == "proxy-password"
+    assert saved[0].is_default is True
+    with database.connect() as connection:
+        ciphertext = connection.execute(
+            "SELECT password_ciphertext FROM proxies"
+        ).fetchone()["password_ciphertext"]
+    assert "proxy-password" not in ciphertext
 
 
 def test_settings_can_customize_fetch_extraction_rules(qtbot, monkeypatch) -> None:

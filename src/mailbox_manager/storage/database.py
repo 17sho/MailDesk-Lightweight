@@ -101,12 +101,14 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 CREATE TABLE IF NOT EXISTS proxies (
     id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
     proxy_type TEXT NOT NULL,
     host TEXT NOT NULL,
     port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
     username TEXT NOT NULL DEFAULT '',
     password_ciphertext TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
+    is_default INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     UNIQUE(proxy_type, host, port, username)
 );
@@ -173,6 +175,11 @@ MESSAGE_COLUMNS: dict[str, str] = {
     "web_html_body": "TEXT NOT NULL DEFAULT ''",
 }
 
+PROXY_COLUMNS: dict[str, str] = {
+    "name": "TEXT NOT NULL DEFAULT ''",
+    "is_default": "INTEGER NOT NULL DEFAULT 0",
+}
+
 
 class Database:
     def __init__(self, path: Path) -> None:
@@ -208,4 +215,13 @@ class Database:
             for name, definition in MESSAGE_COLUMNS.items():
                 if name not in message_columns:
                     connection.execute(f'ALTER TABLE messages ADD COLUMN "{name}" {definition}')
-            connection.execute("PRAGMA user_version = 5")
+            proxy_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(proxies)")
+            }
+            for name, definition in PROXY_COLUMNS.items():
+                if name not in proxy_columns:
+                    connection.execute(f'ALTER TABLE proxies ADD COLUMN "{name}" {definition}')
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_proxies_default ON proxies(is_default DESC, id)"
+            )
+            connection.execute("PRAGMA user_version = 6")

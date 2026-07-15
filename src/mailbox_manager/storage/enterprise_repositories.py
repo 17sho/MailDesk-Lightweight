@@ -148,23 +148,40 @@ class ProxyRepository:
 
     def add(self, proxy: ProxyConfig) -> int:
         with self._database.connect() as connection:
+            if proxy.is_default:
+                connection.execute("UPDATE proxies SET is_default = 0")
             cursor = connection.execute(
                 """
                 INSERT INTO proxies(
-                    proxy_type, host, port, username, password_ciphertext, enabled, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    name, proxy_type, host, port, username, password_ciphertext,
+                    enabled, is_default, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    proxy.name.strip(),
                     proxy.proxy_type.value,
                     proxy.host.casefold(),
                     proxy.port,
                     proxy.username,
                     self._cipher.encrypt_text(proxy.password),
                     int(proxy.enabled),
+                    int(proxy.is_default),
                     _now().isoformat(),
                 ),
             )
             return int(cursor.lastrowid)
+
+    def set_default(self, proxy_id: int) -> None:
+        with self._database.connect() as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM proxies WHERE id = ?", (proxy_id,)
+            ).fetchone()
+            if exists is None:
+                raise ValueError("要设为默认的代理不存在")
+            connection.execute("UPDATE proxies SET is_default = 0")
+            connection.execute(
+                "UPDATE proxies SET is_default = 1 WHERE id = ?", (proxy_id,)
+            )
 
     def get(self, proxy_id: int) -> ProxyConfig | None:
         with self._database.connect() as connection:
@@ -173,18 +190,22 @@ class ProxyRepository:
 
     def list_all(self) -> list[ProxyConfig]:
         with self._database.connect() as connection:
-            rows = connection.execute("SELECT * FROM proxies ORDER BY id").fetchall()
+            rows = connection.execute(
+                "SELECT * FROM proxies ORDER BY is_default DESC, id"
+            ).fetchall()
         return [self._from_row(row) for row in rows]
 
     def _from_row(self, row: object) -> ProxyConfig:
         return ProxyConfig(
             proxy_id=row["id"],  # type: ignore[index]
+            name=row["name"],  # type: ignore[index]
             proxy_type=ProxyType(row["proxy_type"]),  # type: ignore[index]
             host=row["host"],  # type: ignore[index]
             port=row["port"],  # type: ignore[index]
             username=row["username"],  # type: ignore[index]
             password=self._cipher.decrypt_text(row["password_ciphertext"]),  # type: ignore[index]
             enabled=bool(row["enabled"]),  # type: ignore[index]
+            is_default=bool(row["is_default"]),  # type: ignore[index]
         )
 
 

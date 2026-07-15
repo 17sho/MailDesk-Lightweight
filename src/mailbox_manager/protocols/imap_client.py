@@ -23,6 +23,8 @@ from mailbox_manager.protocols.base import EmailClientBase
 from mailbox_manager.protocols.proxy_socket import create_proxy_socket
 
 ConnectionFactory = Callable[..., imaplib.IMAP4]
+IMAP_FETCH_BATCH_SIZE = 25
+UID_RESPONSE_PATTERN = re.compile(rb"\bUID\s+(\d+)\b", re.IGNORECASE)
 
 
 class ImapClient(EmailClientBase):
@@ -131,36 +133,34 @@ class ImapClient(EmailClientBase):
                 identifiers = search_data[0].split()
                 if remaining is not None:
                     identifiers = identifiers[-remaining:]
-                for identifier in reversed(identifiers):
-                    status, fetch_data = connection.uid("fetch", identifier, "(RFC822)")
-                    if status != "OK":
-                        continue
-                    raw = _raw_from_fetch(fetch_data)
-                    if not raw:
-                        continue
-                    message = parse_email_message(
-                        raw,
-                        folder=folder,
-                        keywords=request.keywords,
-                        custom_pattern=request.custom_pattern,
-                    )
-                    message = replace(
-                        message,
-                        transport_id=(
-                            identifier.decode("ascii", errors="ignore")
-                            if isinstance(identifier, bytes)
-                            else str(identifier)
-                        ),
-                    )
-                    if not request.include_raw:
-                        message = replace(message, raw_eml=b"")
-                    messages.append(message)
-                    if message.matched_values and request.post_action is not PostAction.NONE:
-                        _apply_post_action(connection, identifier, request)
-                    if remaining is not None:
-                        remaining -= 1
-                        if remaining <= 0:
-                            break
+                newest_first = list(reversed(identifiers))
+                for offset in range(0, len(newest_first), IMAP_FETCH_BATCH_SIZE):
+                    batch = newest_first[offset : offset + IMAP_FETCH_BATCH_SIZE]
+                    for identifier, raw in _fetch_uid_messages(connection, batch):
+                        message = parse_email_message(
+                            raw,
+                            folder=folder,
+                            keywords=request.keywords,
+                            custom_pattern=request.custom_pattern,
+                        )
+                        message = replace(
+                            message,
+                            transport_id=_uid_text(identifier),
+                        )
+                        if not request.include_raw:
+                            message = replace(message, raw_eml=b"")
+                        messages.append(message)
+                        if (
+                            message.matched_values
+                            and request.post_action is not PostAction.NONE
+                        ):
+                            _apply_post_action(connection, identifier, request)
+                        if remaining is not None:
+                            remaining -= 1
+                            if remaining <= 0:
+                                break
+                    if remaining is not None and remaining <= 0:
+                        break
             return FetchResult(AccountStatus.SUCCESS, tuple(messages), "收取完成")
         except Exception as exc:
             status, detail = _classify_imap_error(exc)
@@ -202,6 +202,75 @@ def _raw_from_fetch(fetch_data: object) -> bytes:
         if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], bytes):
             return item[1]
     return b""
+
+
+def _fetch_uid_messages(
+    connection: imaplib.IMAP4, identifiers: list[bytes]
+) -> list[tuple[bytes, bytes]]:
+    """Fetch a small UID batch, falling back only for missing server responses."""
+
+    if not identifiers:
+        return []
+    normalized = [_uid_bytes(identifier) for identifier in identifiers]
+    sequence_set = b",".join(normalized)
+    status, fetch_data = connection.uid("fetch", sequence_set, "(UID RFC822)")
+    mapped = _raw_messages_by_uid(fetch_data) if status == "OK" else {}
+    if len(normalized) == 1 and normalized[0] not in mapped:
+        raw = _raw_from_fetch(fetch_data)
+        if raw:
+            mapped[normalized[0]] = raw
+
+    for identifier in normalized:
+        if identifier in mapped:
+            continue
+        status, individual_data = connection.uid(
+            "fetch", identifier, "(UID RFC822)"
+        )
+        if status != "OK":
+            continue
+        individual = _raw_messages_by_uid(individual_data)
+        raw = individual.get(identifier) or _raw_from_fetch(individual_data)
+        if raw:
+            mapped[identifier] = raw
+    return [
+        (identifier, mapped[identifier])
+        for identifier in normalized
+        if identifier in mapped
+    ]
+
+
+def _raw_messages_by_uid(fetch_data: object) -> dict[bytes, bytes]:
+    messages: dict[bytes, bytes] = {}
+    if not isinstance(fetch_data, list):
+        return messages
+    for item in fetch_data:
+        if not (
+            isinstance(item, tuple)
+            and len(item) >= 2
+            and isinstance(item[0], bytes)
+            and isinstance(item[1], bytes)
+        ):
+            continue
+        match = UID_RESPONSE_PATTERN.search(item[0])
+        if match is not None:
+            messages[match.group(1)] = item[1]
+    return messages
+
+
+def _uid_bytes(identifier: bytes | str) -> bytes:
+    return (
+        identifier.strip()
+        if isinstance(identifier, bytes)
+        else str(identifier).strip().encode("ascii", errors="ignore")
+    )
+
+
+def _uid_text(identifier: bytes | str) -> str:
+    return (
+        identifier.decode("ascii", errors="ignore")
+        if isinstance(identifier, bytes)
+        else str(identifier)
+    )
 
 
 FOLDER_PATTERN = re.compile(r"^\((?P<flags>[^)]*)\)\s+\S+\s+(?P<name>.+)$")

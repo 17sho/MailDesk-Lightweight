@@ -230,18 +230,26 @@ class ProxyConfig:
     proxy_type: ProxyType
     host: str
     port: int
+    name: str = ""
     username: str = ""
     password: str = field(default="", repr=False)
     enabled: bool = True
+    is_default: bool = False
     proxy_id: int | None = None
 
     def __post_init__(self) -> None:
         if not self.host or not 1 <= self.port <= 65535:
             raise ValueError("代理地址或端口不正确")
+        if len(self.name.strip()) > 100:
+            raise ValueError("代理名称不能超过 100 个字符")
 
     @property
     def identity(self) -> str:
         return f"{self.proxy_type.value}://{self.host}:{self.port}"
+
+    @property
+    def display_name(self) -> str:
+        return self.name.strip() or self.identity
 
 
 @dataclass(frozen=True, slots=True)

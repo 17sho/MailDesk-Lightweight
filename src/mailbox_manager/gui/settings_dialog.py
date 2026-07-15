@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QMessageBox,
     QPlainTextEdit,
+    QPushButton,
     QScrollArea,
     QSpinBox,
     QStackedWidget,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mailbox_manager import __version__
 from mailbox_manager.domain.models import FetchRequest, PostAction, ProxyType
 from mailbox_manager.gui.dashboard import (
     QUICK_ACTION_DEFINITIONS,
@@ -38,6 +40,9 @@ from mailbox_manager.services.translation_service import (
 
 
 class EnterpriseSettingsDialog(QDialog):
+    addProxyRequested = Signal()
+    updateCheckRequested = Signal()
+
     def __init__(
         self,
         values: dict[str, object] | None = None,
@@ -78,6 +83,7 @@ class EnterpriseSettingsDialog(QDialog):
         self.pages.addWidget(self._rule_page())
         self.pages.addWidget(self._translation_page(values))
         self.pages.addWidget(self._dashboard_page(values))
+        self.pages.addWidget(self._update_page())
         shell_layout.addWidget(self.pages, 1)
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.navigation.setCurrentRow(0)
@@ -135,6 +141,7 @@ class EnterpriseSettingsDialog(QDialog):
                 "新增规则",
                 "邮件翻译",
                 "工作台",
+                "系统更新",
             ]
         )
         sidebar_layout.addWidget(self.navigation, 1)
@@ -450,6 +457,27 @@ class EnterpriseSettingsDialog(QDialog):
         self._add_row(switch_form, "代理状态", self.proxy_fetch_enabled)
         self._add_row(switch_form, "路由规则", fixed_hint)
 
+        single_form = self._add_card(
+            layout,
+            "添加单个代理",
+            "适合逐个填写名称、类型、主机、端口和认证信息；保存后立即加入代理池。",
+        )
+        single_row = QWidget()
+        single_layout = QHBoxLayout(single_row)
+        single_layout.setContentsMargins(0, 0, 0, 0)
+        self.proxy_count_label = QLabel(
+            f"当前已保存 {int(values.get('proxy_count', 0))} 个代理"
+        )
+        self.proxy_count_label.setObjectName("translationProviderLabel")
+        single_layout.addWidget(self.proxy_count_label)
+        single_layout.addStretch(1)
+        self.add_proxy_button = QPushButton("添加单个代理")
+        self.add_proxy_button.setObjectName("primaryButton")
+        self.add_proxy_button.setIcon(line_icon("globe", "#ffffff", 16))
+        self.add_proxy_button.clicked.connect(self.addProxyRequested.emit)
+        single_layout.addWidget(self.add_proxy_button)
+        self._add_row(single_form, "代理管理", single_row)
+
         form = self._add_card(
             layout,
             "导入代理",
@@ -466,6 +494,40 @@ class EnterpriseSettingsDialog(QDialog):
         )
         self._add_row(form, "代理类型", self.proxy_type)
         self._add_row(form, "代理列表", self.proxy_text)
+        layout.addStretch(1)
+        return page
+
+    def set_proxy_count(self, count: int) -> None:
+        self.proxy_count_label.setText(f"当前已保存 {max(0, count)} 个代理")
+
+    def _update_page(self) -> QScrollArea:
+        page, layout = self._new_page(
+            "系统更新",
+            "手动检查 GitHub 上最新的 MailDesk 正式版本；不需要登录 GitHub。",
+        )
+        update_form = self._add_card(
+            layout,
+            "版本与更新",
+            "检查会在后台执行，不会阻塞账号管理或正在进行的取件任务。",
+        )
+        version = QLabel(f"MailDesk v{__version__} · 正式更新通道")
+        version.setObjectName("translationProviderLabel")
+        version.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.update_check_button = QPushButton("检查系统更新")
+        self.update_check_button.setObjectName("primaryButton")
+        self.update_check_button.setIcon(line_icon("refresh", "#ffffff", 16))
+        self.update_check_button.clicked.connect(self.updateCheckRequested.emit)
+        self._add_row(update_form, "当前版本", version)
+        self._add_row(update_form, "更新操作", self.update_check_button)
+        security_form = self._add_card(
+            layout,
+            "安全校验",
+            "只有 Ed25519 发布签名、版本、文件名、体积和 SHA-256 全部匹配，才允许下载与安装。",
+        )
+        security = QLabel("仅跟踪正式 Release；草稿和预发行版本不会自动安装。")
+        security.setObjectName("translationProviderLabel")
+        security.setWordWrap(True)
+        self._add_row(security_form, "更新策略", security)
         layout.addStretch(1)
         return page
 

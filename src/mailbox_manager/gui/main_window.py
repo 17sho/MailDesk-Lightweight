@@ -89,6 +89,7 @@ from mailbox_manager.gui.dashboard import DashboardWidget, configured_quick_acti
 from mailbox_manager.gui.icons import line_icon
 from mailbox_manager.gui.import_dialog import ImportPreviewDialog
 from mailbox_manager.gui.lazy_email_body_view import LazyEmailBodyView
+from mailbox_manager.gui.proxy_dialog import AddProxyDialog
 from mailbox_manager.gui.settings_dialog import EnterpriseSettingsDialog
 from mailbox_manager.gui.theme import DARK_THEME, LIGHT_THEME
 from mailbox_manager.gui.toast import BottomToast
@@ -2804,7 +2805,12 @@ class MainWindow(QMainWindow):
             direct_action = proxy_menu.addAction("直连")
             proxy_actions[direct_action] = None
             for proxy in self._proxies.list_all():
-                action = proxy_menu.addAction(proxy.identity)
+                label = proxy.display_name
+                if proxy.name:
+                    label = f"{label} · {proxy.identity}"
+                if proxy.is_default:
+                    label = f"★ {label}"
+                action = proxy_menu.addAction(label)
                 proxy_actions[action] = proxy.proxy_id
         menu.addSeparator()
         delete_accounts_action = menu.addAction(f"删除所选账号（{len(selected_ids)}）…")
@@ -3622,6 +3628,8 @@ class MainWindow(QMainWindow):
             )
             if selected_schedule is not None:
                 current["schedule_interval"] = selected_schedule.interval_minutes
+        if self._proxies is not None:
+            current["proxy_count"] = len(self._proxies.list_all())
         webhook_options = (
             [
                 (item.webhook_id, item.name)
@@ -3636,6 +3644,14 @@ class MainWindow(QMainWindow):
             self,
             webhook_options=webhook_options,
         )
+        if hasattr(dialog, "addProxyRequested"):
+            dialog.addProxyRequested.connect(
+                lambda: self._show_add_proxy_dialog(dialog)
+            )
+        if hasattr(dialog, "updateCheckRequested"):
+            dialog.updateCheckRequested.connect(
+                lambda: self.check_for_updates(manual=True)
+            )
         if dialog.exec() != EnterpriseSettingsDialog.DialogCode.Accepted:
             return
         values = dialog.values()
@@ -3699,6 +3715,31 @@ class MainWindow(QMainWindow):
             self.page_toast.show_message("系统设置已保存并应用")
         except Exception as exc:
             QMessageBox.warning(self, "设置保存失败", str(exc))
+
+    def _show_add_proxy_dialog(self, parent: QWidget | None = None) -> None:
+        if self._proxies is None:
+            QMessageBox.information(
+                parent or self,
+                "代理功能不可用",
+                "当前运行方式没有配置代理存储。",
+            )
+            return
+        dialog = AddProxyDialog(parent or self)
+        if dialog.exec() != AddProxyDialog.DialogCode.Accepted or dialog.proxy is None:
+            return
+        try:
+            self._proxies.add(dialog.proxy)
+        except Exception as exc:
+            QMessageBox.warning(parent or self, "代理保存失败", str(exc))
+            return
+        count = len(self._proxies.list_all())
+        if isinstance(parent, EnterpriseSettingsDialog):
+            parent.set_proxy_count(count)
+        if hasattr(self, "dashboard"):
+            self.dashboard.refresh()
+        message = f"代理“{dialog.proxy.display_name}”已加密保存"
+        self.statusBar().showMessage(message, 6000)
+        self.page_toast.show_message(message)
 
     def _save_enterprise_settings(self, values: dict[str, object]) -> None:
         proxy_text = str(values.get("proxy_text", "")).strip()

@@ -160,7 +160,7 @@ def test_message_repository_migrates_and_refreshes_html_body(tmp_path) -> None:
         ).fetchone()
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert attachment_table == ("attachments",)
-    assert version == 5
+    assert version == 6
 
 
 def test_message_repository_persists_attachment_and_loads_binary_on_demand(tmp_path) -> None:
