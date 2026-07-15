@@ -1016,6 +1016,10 @@ class UpdateService:
         creation_flags = 0
         if os.name == "nt":
             creation_flags = subprocess.CREATE_NO_WINDOW
+        environment = os.environ.copy()
+        for key in tuple(environment):
+            if key.casefold() == "psmodulepath":
+                environment.pop(key, None)
         try:
             process = subprocess.Popen(
                 plan.command,
@@ -1024,6 +1028,7 @@ class UpdateService:
                 stderr=subprocess.DEVNULL,
                 close_fds=True,
                 creationflags=creation_flags,
+                env=environment,
             )
         except OSError as exc:
             self.release_update_lock()
@@ -1575,6 +1580,25 @@ _POWERSHELL_INSTALLER_SCRIPT = r'''param(
 
 $ErrorActionPreference = "Stop"
 
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string]$LiteralPath)
+
+    $Stream = [System.IO.File]::Open(
+        $LiteralPath,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::Read
+    )
+    $Hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $HashBytes = $Hasher.ComputeHash($Stream)
+        return [System.BitConverter]::ToString($HashBytes).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $Hasher.Dispose()
+        $Stream.Dispose()
+    }
+}
+
 try {
     Set-Content -LiteralPath $ReadyPath -Value $HealthToken -Encoding UTF8 -NoNewline
 } catch {
@@ -1616,9 +1640,7 @@ try {
     if (($ManifestItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "Update content manifest is a reparse point"
     }
-    $ManifestHash = (
-        Get-FileHash -LiteralPath $ContentManifestPath -Algorithm SHA256
-    ).Hash.ToLowerInvariant()
+    $ManifestHash = Get-Sha256Hex -LiteralPath $ContentManifestPath
     if ($ManifestHash -cne $ContentManifestSha256) {
         throw "Update content manifest hash mismatch"
     }
@@ -1651,9 +1673,7 @@ try {
             throw "Update content manifest path escapes staging"
         }
         $CandidateItem = Get-Item -LiteralPath $Candidate -Force
-        $CandidateHash = (
-            Get-FileHash -LiteralPath $Candidate -Algorithm SHA256
-        ).Hash.ToLowerInvariant()
+        $CandidateHash = Get-Sha256Hex -LiteralPath $Candidate
         if (
             $CandidateItem.PSIsContainer -or
             ($CandidateItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
@@ -1705,12 +1725,16 @@ try {
         $OriginalMoved = $true
     }
     Move-Item -LiteralPath $IncomingPath -Destination $TargetPath
-    $env:MAILDESK_UPDATE_HEALTH_TOKEN = $HealthToken
-    $env:MAILDESK_UPDATE_HEALTH_FILE = $HealthPath
-    $NewProcess = Start-Process `
-        -FilePath $RestartExecutable `
-        -WorkingDirectory (Split-Path -Parent $RestartExecutable) `
-        -PassThru
+    $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $StartInfo.FileName = $RestartExecutable
+    $StartInfo.WorkingDirectory = Split-Path -Parent $RestartExecutable
+    $StartInfo.UseShellExecute = $false
+    $StartInfo.EnvironmentVariables["MAILDESK_UPDATE_HEALTH_TOKEN"] = $HealthToken
+    $StartInfo.EnvironmentVariables["MAILDESK_UPDATE_HEALTH_FILE"] = $HealthPath
+    $NewProcess = [System.Diagnostics.Process]::Start($StartInfo)
+    if ($null -eq $NewProcess) {
+        throw "Unable to start the new MailDesk process"
+    }
     $Healthy = $false
     $Deadline = [DateTime]::UtcNow.AddSeconds(120)
     while ([DateTime]::UtcNow -lt $Deadline) {

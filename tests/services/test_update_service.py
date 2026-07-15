@@ -685,6 +685,10 @@ def test_installer_plan_waits_replaces_rolls_back_and_restarts(
     assert "if ($OriginalMoved)" in script
     assert "Remove-Item -LiteralPath $TargetPath" in script
     assert "Start-Process" in script
+    assert "$StartInfo.UseShellExecute = $false" in script
+    assert '$StartInfo.EnvironmentVariables["MAILDESK_UPDATE_HEALTH_TOKEN"]' in script
+    assert "System.Security.Cryptography.SHA256" in script
+    assert "Get-FileHash" not in script
     assert plan.command[0] == "trusted-powershell.exe"
     assert plan.command[plan.command.index("-ParentPid") + 1] == "4321"
     assert plan.command[plan.command.index("-SourcePath") + 1] == str(source.resolve())
