@@ -171,14 +171,21 @@ def detect_install_mode(
     *,
     frozen: bool | None = None,
     meipass: str | os.PathLike[str] | None = None,
+    platform_name: str | None = None,
 ) -> InstallMode:
     """Detect a PyInstaller onefile/onedir process without importing PyInstaller."""
 
+    runtime_platform = os.name if platform_name is None else platform_name
+    if runtime_platform != "nt":
+        # The transactional installer is Windows-specific. Packaged macOS builds
+        # may still check releases, but they must use the documented manual path.
+        return InstallMode.SOURCE
     is_frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
     if not is_frozen:
         return InstallMode.SOURCE
     bundle_root = getattr(sys, "_MEIPASS", "") if meipass is None else meipass
-    if bundle_root and Path(bundle_root).name.casefold() == "_internal":
+    bundle_name = str(bundle_root).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if bundle_name.casefold() == "_internal":
         return InstallMode.ONEDIR
     return InstallMode.ONEFILE
 

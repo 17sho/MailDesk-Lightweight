@@ -382,6 +382,9 @@ class DashboardWidget(QWidget):
         self.insights_row.setMinimumHeight(270)
         layout.addWidget(self.insights_row, 1)
 
+        # QLayout.SetMinimumSize can replace the earlier explicit minimum with a
+        # platform font-derived value (629 px on macOS). Re-assert the UI contract.
+        self.content.setMinimumSize(640, 720)
         self._update_responsive_layout(self.width())
         self.set_quick_actions(quick_action_ids)
         self.set_proxy_state(proxy_enabled)

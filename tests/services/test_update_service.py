@@ -286,9 +286,32 @@ def test_semantic_version_rejects_invalid_values(version: str) -> None:
 
 
 def test_detects_source_onefile_and_onedir_modes() -> None:
-    assert detect_install_mode(frozen=False, meipass="ignored") is InstallMode.SOURCE
-    assert detect_install_mode(frozen=True, meipass=r"C:\Temp\_MEI123") is InstallMode.ONEFILE
-    assert detect_install_mode(frozen=True, meipass=r"C:\MailDesk\_internal") is InstallMode.ONEDIR
+    assert (
+        detect_install_mode(
+            frozen=False, meipass="ignored", platform_name="nt"
+        )
+        is InstallMode.SOURCE
+    )
+    assert (
+        detect_install_mode(
+            frozen=True, meipass=r"C:\Temp\_MEI123", platform_name="nt"
+        )
+        is InstallMode.ONEFILE
+    )
+    assert (
+        detect_install_mode(
+            frozen=True, meipass=r"C:\MailDesk\_internal", platform_name="nt"
+        )
+        is InstallMode.ONEDIR
+    )
+    assert (
+        detect_install_mode(
+            frozen=True,
+            meipass="/Applications/MailDesk.app/Contents/Frameworks",
+            platform_name="posix",
+        )
+        is InstallMode.SOURCE
+    )
 
 
 def test_parse_release_rejects_drafts_prereleases_and_duplicate_assets() -> None:
