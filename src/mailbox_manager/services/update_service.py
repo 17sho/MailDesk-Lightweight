@@ -1729,10 +1729,16 @@ try {
     }
     if (-not $Healthy) {
         $NewProcess.Refresh()
+        $ProcessExited = $NewProcess.HasExited
+        $ExitCode = if ($ProcessExited) { [string]$NewProcess.ExitCode } else { "running" }
+        $MarkerExists = Test-Path -LiteralPath $HealthPath -PathType Leaf
         if (-not $NewProcess.HasExited) {
             Stop-Process -Id $NewProcess.Id -Force -ErrorAction SilentlyContinue
         }
-        throw "New MailDesk process did not report healthy startup"
+        throw (
+            "New MailDesk process did not report healthy startup " +
+            "(exited=$ProcessExited; exit_code=$ExitCode; marker_exists=$MarkerExists)"
+        )
     }
     Start-Sleep -Seconds 3
     $NewProcess.Refresh()
@@ -1755,6 +1761,10 @@ try {
     $LockStream.Dispose()
     exit 0
 } catch {
+    $FailureReason = ([string]$_.Exception.Message -replace "[\r\n]+", " ").Trim()
+    if ($FailureReason.Length -gt 1024) {
+        $FailureReason = $FailureReason.Substring(0, 1024)
+    }
     try {
         Remove-Item Env:MAILDESK_UPDATE_HEALTH_TOKEN -ErrorAction SilentlyContinue
         Remove-Item Env:MAILDESK_UPDATE_HEALTH_FILE -ErrorAction SilentlyContinue
@@ -1772,9 +1782,13 @@ try {
             Remove-Item -LiteralPath $TargetPath -Recurse -Force
         }
         try {
+            $FailureOutcome = "failed_and_rolled_back"
+            if (-not [string]::IsNullOrWhiteSpace($FailureReason)) {
+                $FailureOutcome += "`n" + $FailureReason
+            }
             Set-Content `
                 -LiteralPath $ResultPath `
-                -Value "failed_and_rolled_back" `
+                -Value $FailureOutcome `
                 -Encoding UTF8
         } catch {
             # A diagnostic write failure must not prevent restarting the old version.

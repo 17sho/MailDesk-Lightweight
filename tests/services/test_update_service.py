@@ -777,18 +777,16 @@ def test_powershell_helper_replaces_or_rolls_back_real_temp_files(
             parent.wait(timeout=5)
     return_code = helper.wait(timeout=150)
 
-    assert return_code == (0 if healthy else 1)
     assert plan.result_path is not None
+    result_text = plan.result_path.read_text(encoding="utf-8-sig").strip()
+    assert return_code == (0 if healthy else 1), result_text
     if healthy:
         assert current.read_bytes() == expected_update
-        assert plan.result_path.read_text(encoding="utf-8-sig").strip() == "success"
+        assert result_text == "success"
         assert not staging.exists()
     else:
         assert current.read_bytes() == original
-        assert (
-            plan.result_path.read_text(encoding="utf-8-sig").strip()
-            == "failed_and_rolled_back"
-        )
+        assert result_text.splitlines()[0] == "failed_and_rolled_back"
     assert not plan.backup_path.exists()
     assert plan.incoming_path is not None and not plan.incoming_path.exists()
 
