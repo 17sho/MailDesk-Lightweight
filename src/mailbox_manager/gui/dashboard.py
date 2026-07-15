@@ -479,6 +479,14 @@ class DashboardWidget(QWidget):
         if content_layout is not None:
             content_layout.invalidate()
             content_layout.activate()
+        # SetMinimumSize is recomputed when Qt activates the layout. On macOS,
+        # that platform-derived value can be 629 px, replacing the explicit
+        # 640 px contract set during construction. Re-apply the floor after
+        # every responsive layout activation so compact windows remain stable.
+        self.content.setMinimumSize(
+            max(640, self.content.minimumWidth()),
+            max(720, self.content.minimumHeight()),
+        )
 
     def _schedule_scroll_to_top(self) -> None:
         if self._scroll_reset_pending:
