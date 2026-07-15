@@ -166,7 +166,7 @@ def test_dashboard_exposes_stable_theme_hooks(qtbot) -> None:
     assert dashboard.recent_card.objectName() == "dashboardRecentPanel"
     assert dashboard.health_chart.objectName() == "dashboardChartView"
     assert dashboard.rate_chart.property("chartId") == "trend"
-    assert dashboard.rate_chart.chart().legend().isVisible() is False
+    assert dashboard.rate_chart.legend_visible is False
     assert dashboard.quick_action_buttons["accounts"].property("actionId") == "accounts"
 
 
@@ -251,10 +251,15 @@ def test_dashboard_renders_single_hour_as_a_line_with_headroom(qtbot) -> None:
     dashboard = DashboardWidget(_SinglePointStatistics(), _Messages())
     qtbot.addWidget(dashboard)
 
-    chart = dashboard.rate_chart.chart()
-    series = chart.series()[0]
-    vertical_axis = chart.axes(Qt.Orientation.Vertical)[0]
+    assert dashboard.rate_chart.rendered_point_count == 2
+    assert dashboard.rate_chart.points_visible is False
+    assert dashboard.rate_chart.y_max > 4
 
-    assert series.count() == 2
-    assert series.pointsVisible() is False
-    assert vertical_axis.max() > 4
+
+def test_dashboard_charts_render_without_qtcharts_runtime(qtbot) -> None:
+    dashboard = _dashboard(qtbot)
+    dashboard.health_chart.resize(320, 190)
+    dashboard.rate_chart.resize(520, 190)
+
+    assert dashboard.health_chart.grab().isNull() is False
+    assert dashboard.rate_chart.grab().isNull() is False

@@ -30,6 +30,7 @@ QToolButton {
     border-radius: 7px;
     padding: 6px 9px;
     margin: 1px;
+    font-weight: 500;
 }
 QToolButton:hover {
     background: #f1f5f9;
@@ -296,6 +297,7 @@ QPushButton {
     border-radius: 7px;
     padding: 7px 14px;
     min-height: 18px;
+    font-weight: 500;
 }
 QPushButton:hover { background: #f8fafc; border-color: #b8c4d4; }
 QPushButton:pressed { background: #eef2f7; }
@@ -442,7 +444,7 @@ QPushButton#translationButton, QPushButton#translateMessageButton {
     border-radius: 7px;
     padding: 5px 12px;
     min-height: 19px;
-    font-weight: 650;
+    font-weight: 600;
 }
 QPushButton#translationButton:hover, QPushButton#translateMessageButton:hover {
     background: #dbeafe;
@@ -538,7 +540,7 @@ QTabWidget#mainTabs > QTabBar::tab:selected {
     color: #1d4ed8;
     border-color: #d4e5ff;
     border-bottom: 3px solid #2563eb;
-    font-weight: 650;
+    font-weight: 600;
 }
 
 QDialog#settingsDialog { background: #f4f7fb; }
@@ -700,7 +702,7 @@ QWidget#dashboardContent {
     border: 0;
 }
 QFrame#dashboardHeader { background: transparent; border: 0; }
-QLabel#dashboardTitle { color: #0f172a; font-size: 24px; font-weight: 750; }
+QLabel#dashboardTitle { color: #0f172a; font-size: 24px; font-weight: 700; }
 QLabel#dashboardSubtitle { color: #718096; font-size: 12px; }
 QLabel#dashboardHealthBadge {
     background: #ecfdf5;
@@ -709,7 +711,7 @@ QLabel#dashboardHealthBadge {
     border-radius: 10px;
     padding: 5px 10px;
     font-size: 11px;
-    font-weight: 650;
+    font-weight: 600;
 }
 QLabel#dashboardHealthBadge[state="warning"] {
     background: #fff7ed;
@@ -734,8 +736,8 @@ QLabel#dashboardMetricIcon[metricId="accounts"] { background: #eaf2ff; }
 QLabel#dashboardMetricIcon[metricId="messages"] { background: #e9fbf4; }
 QLabel#dashboardMetricIcon[metricId="abnormal"] { background: #fff5e6; }
 QLabel#dashboardMetricIcon[metricId="proxy"] { background: #f3efff; }
-QLabel#dashboardMetricLabel { color: #65748a; font-size: 11px; font-weight: 650; }
-QLabel#dashboardMetricValue { color: #0f172a; font-size: 27px; font-weight: 750; }
+QLabel#dashboardMetricLabel { color: #65748a; font-size: 11px; font-weight: 600; }
+QLabel#dashboardMetricValue { color: #0f172a; font-size: 27px; font-weight: 700; }
 QLabel#dashboardMetricHint { color: #8290a3; font-size: 10px; }
 QToolButton#dashboardMetricAction {
     background: #f8fafc;
@@ -744,7 +746,7 @@ QToolButton#dashboardMetricAction {
     border-radius: 8px;
     padding: 5px 8px;
     font-size: 11px;
-    font-weight: 650;
+    font-weight: 600;
 }
 QToolButton#dashboardMetricAction:hover {
     background: #eef5ff; border-color: #bfdbfe; color: #1d4ed8;
@@ -758,7 +760,7 @@ QFrame#dashboardChartPanel {
     border: 1px solid #dfe7f1;
     border-radius: 14px;
 }
-QLabel#dashboardPanelTitle { color: #172033; font-size: 15px; font-weight: 720; }
+QLabel#dashboardPanelTitle { color: #172033; font-size: 15px; font-weight: 700; }
 QLabel#dashboardPanelCaption { color: #8290a3; font-size: 10px; }
 QLabel#dashboardCountBadge {
     background: #eef2ff;
@@ -766,7 +768,7 @@ QLabel#dashboardCountBadge {
     border-radius: 10px;
     padding: 4px 9px;
     font-size: 11px;
-    font-weight: 650;
+    font-weight: 600;
 }
 QToolButton#dashboardRefreshButton, QToolButton#columnMenuButton {
     background: #ffffff;
@@ -786,7 +788,7 @@ QToolButton#dashboardQuickAction {
     border-radius: 11px;
     padding: 12px;
     min-height: 66px;
-    font-weight: 650;
+    font-weight: 600;
 }
 QToolButton#dashboardQuickAction:hover {
     background: #edf5ff; color: #1d4ed8; border-color: #a9c9f7;
@@ -816,7 +818,7 @@ QListWidget#dashboardRecentList::item {
 }
 QListWidget#dashboardRecentList::item:hover { background: #f8fafc; }
 QListWidget#dashboardRecentList::item:selected { background: #eaf2ff; color: #1d4ed8; }
-QChartView#dashboardChartView { background: transparent; border: 0; }
+QWidget#dashboardChartView { background: transparent; border: 0; }
 
 QFrame#mailViewerHeader {
     background: #ffffff;
@@ -857,7 +859,7 @@ QFrame#mailAttachmentPanel, QFrame#composeAttachmentCard, QFrame#composeSenderCa
 }
 QLabel#mailAttachmentTitle, QLabel#composeFieldLabel {
     color: #334155;
-    font-weight: 650;
+    font-weight: 600;
 }
 QListWidget#mailAttachmentList, QListWidget#composeAttachmentList {
     background: #ffffff;
@@ -881,7 +883,7 @@ QDialog#composeDialog { background: #ffffff; }
 QFrame#composeHeader { background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
 QFrame#composeFooter { background: #f8fafc; border-top: 1px solid #e2e8f0; }
 QWidget#composeContent { background: #ffffff; }
-QLabel#composeTitle { color: #0f172a; font-size: 19px; font-weight: 750; }
+QLabel#composeTitle { color: #0f172a; font-size: 19px; font-weight: 700; }
 QLabel#composeSubtitle, QLabel#composeHint { color: #64748b; }
 QLabel#composeSenderValue { color: #1d4ed8; }
 QTextEdit#composeBody {
@@ -919,7 +921,7 @@ QLabel#updateHeaderIcon {
                                 stop:0 #2563eb, stop:1 #0ea5a8);
     border-radius: 12px;
 }
-QLabel#updateTitle { color: #111827; font-size: 21px; font-weight: 750; }
+QLabel#updateTitle { color: #111827; font-size: 21px; font-weight: 700; }
 QLabel#updateHeaderSubtitle { color: #8793a7; font-size: 11px; }
 QToolButton#updateCloseButton {
     background: transparent;
@@ -956,7 +958,7 @@ QFrame#updateProgressPanel {
     border: 1px solid #dfe7f1;
     border-radius: 10px;
 }
-QLabel#updateProgressStatus { color: #334155; font-size: 12px; font-weight: 650; }
+QLabel#updateProgressStatus { color: #334155; font-size: 12px; font-weight: 600; }
 QLabel#updateProgressPercent { color: #2563eb; font-size: 12px; font-weight: 700; }
 QLabel#updateProgressDetail { color: #718096; font-size: 11px; }
 QProgressBar#updateProgressBar {
@@ -1004,7 +1006,7 @@ QLabel#bottomToastIcon {
     color: #6ee7b7;
     border-radius: 11px;
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
 }
 QLabel#bottomToastText {
     color: #ffffff;
@@ -1021,6 +1023,7 @@ QMenu {
     border: 1px solid #d8e0eb;
     border-radius: 10px;
     padding: 6px;
+    font-weight: 400;
 }
 QMenu::item {
     background: transparent;
@@ -1070,30 +1073,35 @@ QDialog#closeWindowDialog { background: transparent; }
 QFrame#closeDialogCard {
     background: #ffffff;
     border: 1px solid #dce3ec;
-    border-radius: 20px;
+    border-radius: 16px;
 }
-QLabel#closeDialogTitle { color: #111827; font-size: 25px; font-weight: 750; }
-QLabel#closeDialogSubtitle { color: #64748b; font-size: 15px; }
+QLabel#closeDialogTitle { color: #111827; font-size: 20px; font-weight: 700; }
+QLabel#closeDialogSubtitle { color: #64748b; font-size: 12px; }
 QPushButton#closeDialogDismiss {
     background: transparent; border: 0; color: #94a3b8;
-    font-size: 28px; padding: 0;
+    font-size: 22px; font-weight: 400; padding: 0;
 }
 QPushButton#closeDialogDismiss:hover { background: #f1f5f9; color: #475569; }
-QCommandLinkButton#closeTrayOption, QCommandLinkButton#closeExitOption {
+QPushButton#closeTrayOption, QPushButton#closeExitOption {
     background: #ffffff;
-    color: #172033;
     border: 1px solid #dce3ec;
-    border-radius: 13px;
-    padding: 15px 20px;
-    font-size: 16px;
-    font-weight: 650;
+    border-radius: 11px;
+    padding: 0;
 }
-QCommandLinkButton#closeTrayOption:hover { background: #f8fbff; border-color: #93b9ff; }
-QCommandLinkButton#closeExitOption:hover { background: #fff8f8; border-color: #fca5a5; }
-QCommandLinkButton#closeTrayOption:disabled {
-    background: #f8fafc; color: #94a3b8; border-color: #e2e8f0;
+QPushButton#closeTrayOption:hover { background: #f8fbff; border-color: #93b9ff; }
+QPushButton#closeExitOption:hover { background: #fff8f8; border-color: #fca5a5; }
+QPushButton#closeTrayOption:focus, QPushButton#closeExitOption:focus {
+    border: 2px solid #60a5fa;
 }
-QCheckBox#closeRememberChoice { color: #526176; font-size: 14px; spacing: 10px; }
+QPushButton#closeTrayOption:disabled {
+    background: #f8fafc; border-color: #e2e8f0;
+}
+QLabel#closeOptionTitle { color: #172033; font-size: 14px; font-weight: 600; }
+QLabel#closeOptionDescription { color: #718096; font-size: 11px; font-weight: 400; }
+QLabel#closeOptionArrow { color: #94a3b8; font-size: 22px; font-weight: 400; }
+QLabel#closeOptionTitle:disabled, QLabel#closeOptionDescription:disabled,
+QLabel#closeOptionArrow:disabled { color: #a8b1c0; }
+QCheckBox#closeRememberChoice { color: #526176; font-size: 12px; spacing: 8px; }
 QScrollBar:vertical {
     background: transparent;
     width: 10px;
@@ -1139,6 +1147,7 @@ QToolButton {
     border-radius: 7px;
     padding: 6px 9px;
     margin: 1px;
+    font-weight: 500;
 }
 QToolButton:hover { background: #202b3b; border-color: #324057; }
 QToolButton:pressed { background: #29364a; }
@@ -1388,6 +1397,7 @@ QPushButton {
     border-radius: 7px;
     padding: 7px 14px;
     min-height: 18px;
+    font-weight: 500;
 }
 QPushButton:hover { background: #202c3d; border-color: #465873; }
 QPushButton:pressed { background: #27364a; }
@@ -1530,7 +1540,7 @@ QPushButton#translationButton, QPushButton#translateMessageButton {
     border-radius: 7px;
     padding: 5px 12px;
     min-height: 19px;
-    font-weight: 650;
+    font-weight: 600;
 }
 QPushButton#translationButton:hover, QPushButton#translateMessageButton:hover {
     background: #244b7c;
@@ -1626,7 +1636,7 @@ QTabWidget#mainTabs > QTabBar::tab:selected {
     color: #bfdbfe;
     border-color: #29415f;
     border-bottom: 3px solid #60a5fa;
-    font-weight: 650;
+    font-weight: 600;
 }
 
 QDialog#settingsDialog { background: #0f1520; }
@@ -1779,7 +1789,7 @@ QScrollArea#dashboardScrollArea,
 QScrollArea#dashboardScrollArea > QWidget > QWidget,
 QWidget#dashboardContent { background: #0f1520; border: 0; }
 QFrame#dashboardHeader { background: transparent; border: 0; }
-QLabel#dashboardTitle { color: #f8fafc; font-size: 24px; font-weight: 750; }
+QLabel#dashboardTitle { color: #f8fafc; font-size: 24px; font-weight: 700; }
 QLabel#dashboardSubtitle { color: #8c99ad; font-size: 12px; }
 QLabel#dashboardHealthBadge {
     background: #123b32;
@@ -1788,7 +1798,7 @@ QLabel#dashboardHealthBadge {
     border-radius: 10px;
     padding: 5px 10px;
     font-size: 11px;
-    font-weight: 650;
+    font-weight: 600;
 }
 QLabel#dashboardHealthBadge[state="warning"] {
     background: #4a2a19; color: #fdba74; border-color: #7c4a28;
@@ -1810,8 +1820,8 @@ QLabel#dashboardMetricIcon[metricId="accounts"] { background: #18345e; }
 QLabel#dashboardMetricIcon[metricId="messages"] { background: #123b32; }
 QLabel#dashboardMetricIcon[metricId="abnormal"] { background: #4a2a19; }
 QLabel#dashboardMetricIcon[metricId="proxy"] { background: #2d234a; }
-QLabel#dashboardMetricLabel { color: #9ba8ba; font-size: 11px; font-weight: 650; }
-QLabel#dashboardMetricValue { color: #f8fafc; font-size: 27px; font-weight: 750; }
+QLabel#dashboardMetricLabel { color: #9ba8ba; font-size: 11px; font-weight: 600; }
+QLabel#dashboardMetricValue { color: #f8fafc; font-size: 27px; font-weight: 700; }
 QLabel#dashboardMetricHint { color: #7f8b9d; font-size: 10px; }
 QToolButton#dashboardMetricAction {
     background: #192332;
@@ -1820,7 +1830,7 @@ QToolButton#dashboardMetricAction {
     border-radius: 8px;
     padding: 5px 8px;
     font-size: 11px;
-    font-weight: 650;
+    font-weight: 600;
 }
 QToolButton#dashboardMetricAction:hover {
     background: #1d3b68; border-color: #365f91; color: #bfdbfe;
@@ -1832,7 +1842,7 @@ QFrame#dashboardQuickPanel, QFrame#dashboardRecentPanel,
 QFrame#dashboardChartPanel {
     background: #151d2a; border: 1px solid #2b374a; border-radius: 14px;
 }
-QLabel#dashboardPanelTitle { color: #edf2f7; font-size: 15px; font-weight: 720; }
+QLabel#dashboardPanelTitle { color: #edf2f7; font-size: 15px; font-weight: 700; }
 QLabel#dashboardPanelCaption { color: #7f8b9d; font-size: 10px; }
 QLabel#dashboardCountBadge {
     background: #242b55;
@@ -1840,7 +1850,7 @@ QLabel#dashboardCountBadge {
     border-radius: 10px;
     padding: 4px 9px;
     font-size: 11px;
-    font-weight: 650;
+    font-weight: 600;
 }
 QToolButton#dashboardRefreshButton, QToolButton#columnMenuButton {
     background: #151d2a;
@@ -1886,7 +1896,7 @@ QListWidget#dashboardRecentList::item {
 }
 QListWidget#dashboardRecentList::item:hover { background: #1c2737; }
 QListWidget#dashboardRecentList::item:selected { background: #18345e; color: #bfdbfe; }
-QChartView#dashboardChartView { background: transparent; border: 0; }
+QWidget#dashboardChartView { background: transparent; border: 0; }
 
 QFrame#mailViewerHeader { background: #101827; border-bottom: 1px solid #273244; }
 QLabel#mailViewerTitle { color: #f8fafc; font-size: 18px; font-weight: 700; }
@@ -1924,7 +1934,7 @@ QFrame#mailAttachmentPanel, QFrame#composeAttachmentCard, QFrame#composeSenderCa
 }
 QLabel#mailAttachmentTitle, QLabel#composeFieldLabel {
     color: #d5dce7;
-    font-weight: 650;
+    font-weight: 600;
 }
 QListWidget#mailAttachmentList, QListWidget#composeAttachmentList {
     background: #101722;
@@ -1948,7 +1958,7 @@ QDialog#composeDialog { background: #0f1520; }
 QFrame#composeHeader { background: #101827; border-bottom: 1px solid #273244; }
 QFrame#composeFooter { background: #101827; border-top: 1px solid #273244; }
 QWidget#composeContent { background: #0f1520; }
-QLabel#composeTitle { color: #f8fafc; font-size: 19px; font-weight: 750; }
+QLabel#composeTitle { color: #f8fafc; font-size: 19px; font-weight: 700; }
 QLabel#composeSubtitle, QLabel#composeHint { color: #8c99ad; }
 QLabel#composeSenderValue { color: #93c5fd; }
 QTextEdit#composeBody {
@@ -1986,7 +1996,7 @@ QLabel#updateHeaderIcon {
                                 stop:0 #3b82f6, stop:1 #0f9fa5);
     border-radius: 12px;
 }
-QLabel#updateTitle { color: #f8fafc; font-size: 21px; font-weight: 750; }
+QLabel#updateTitle { color: #f8fafc; font-size: 21px; font-weight: 700; }
 QLabel#updateHeaderSubtitle { color: #78869b; font-size: 11px; }
 QToolButton#updateCloseButton {
     background: transparent;
@@ -2023,7 +2033,7 @@ QFrame#updateProgressPanel {
     border: 1px solid #2b3a50;
     border-radius: 10px;
 }
-QLabel#updateProgressStatus { color: #d5dce7; font-size: 12px; font-weight: 650; }
+QLabel#updateProgressStatus { color: #d5dce7; font-size: 12px; font-weight: 600; }
 QLabel#updateProgressPercent { color: #60a5fa; font-size: 12px; font-weight: 700; }
 QLabel#updateProgressDetail { color: #8491a5; font-size: 11px; }
 QProgressBar#updateProgressBar {
@@ -2071,7 +2081,7 @@ QLabel#bottomToastIcon {
     color: #ffffff;
     border-radius: 11px;
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
 }
 QLabel#bottomToastText {
     color: #172033;
@@ -2088,6 +2098,7 @@ QMenu {
     border: 1px solid #334156;
     border-radius: 10px;
     padding: 6px;
+    font-weight: 400;
 }
 QMenu::item {
     background: transparent;
@@ -2163,30 +2174,35 @@ QDialog#closeWindowDialog { background: transparent; }
 QFrame#closeDialogCard {
     background: #151d2a;
     border: 1px solid #334155;
-    border-radius: 20px;
+    border-radius: 16px;
 }
-QLabel#closeDialogTitle { color: #f8fafc; font-size: 25px; font-weight: 750; }
-QLabel#closeDialogSubtitle { color: #94a3b8; font-size: 15px; }
+QLabel#closeDialogTitle { color: #f8fafc; font-size: 20px; font-weight: 700; }
+QLabel#closeDialogSubtitle { color: #94a3b8; font-size: 12px; }
 QPushButton#closeDialogDismiss {
     background: transparent; border: 0; color: #718096;
-    font-size: 28px; padding: 0;
+    font-size: 22px; font-weight: 400; padding: 0;
 }
 QPushButton#closeDialogDismiss:hover { background: #202b3b; color: #d5dce7; }
-QCommandLinkButton#closeTrayOption, QCommandLinkButton#closeExitOption {
+QPushButton#closeTrayOption, QPushButton#closeExitOption {
     background: #192332;
-    color: #e5eaf2;
     border: 1px solid #334155;
-    border-radius: 13px;
-    padding: 15px 20px;
-    font-size: 16px;
-    font-weight: 650;
+    border-radius: 11px;
+    padding: 0;
 }
-QCommandLinkButton#closeTrayOption:hover { background: #172a44; border-color: #3b82f6; }
-QCommandLinkButton#closeExitOption:hover { background: #342027; border-color: #ef4444; }
-QCommandLinkButton#closeTrayOption:disabled {
-    background: #121a26; color: #566277; border-color: #273244;
+QPushButton#closeTrayOption:hover { background: #172a44; border-color: #3b82f6; }
+QPushButton#closeExitOption:hover { background: #342027; border-color: #ef4444; }
+QPushButton#closeTrayOption:focus, QPushButton#closeExitOption:focus {
+    border: 2px solid #60a5fa;
 }
-QCheckBox#closeRememberChoice { color: #aab4c5; font-size: 14px; spacing: 10px; }
+QPushButton#closeTrayOption:disabled {
+    background: #121a26; border-color: #273244;
+}
+QLabel#closeOptionTitle { color: #e5eaf2; font-size: 14px; font-weight: 600; }
+QLabel#closeOptionDescription { color: #8c99ad; font-size: 11px; font-weight: 400; }
+QLabel#closeOptionArrow { color: #718096; font-size: 22px; font-weight: 400; }
+QLabel#closeOptionTitle:disabled, QLabel#closeOptionDescription:disabled,
+QLabel#closeOptionArrow:disabled { color: #566277; }
+QCheckBox#closeRememberChoice { color: #aab4c5; font-size: 12px; spacing: 8px; }
 QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
 QScrollBar::handle:vertical { background: #3a475c; border-radius: 4px; min-height: 28px; }
 QScrollBar::handle:vertical:hover { background: #526177; }

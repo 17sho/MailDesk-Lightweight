@@ -4,16 +4,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 
-from PySide6.QtCharts import (
-    QChart,
-    QChartView,
-    QDateTimeAxis,
-    QLineSeries,
-    QPieSeries,
-    QValueAxis,
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QColor,
+    QFontMetrics,
+    QPainter,
+    QPainterPath,
+    QPaintEvent,
+    QPen,
+    QResizeEvent,
+    QShowEvent,
 )
-from PySide6.QtCore import QDateTime, QMargins, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -163,6 +164,234 @@ class _MetricCard(QFrame):
         self.action_button.setIconSize(QSize(15, 15))
         self.action_button.show()
         return self.action_button
+
+
+class _DashboardChart(QWidget):
+    """Small native chart used instead of shipping the QtCharts runtime."""
+
+    _COLORS = (
+        "#3b82f6",
+        "#10b981",
+        "#f59e0b",
+        "#ef4444",
+        "#8b5cf6",
+        "#64748b",
+    )
+
+    def __init__(self, chart_id: str) -> None:
+        super().__init__()
+        self.setObjectName("dashboardChartView")
+        self.setProperty("chartId", chart_id)
+        self.setMinimumHeight(190)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._chart_id = chart_id
+        self._dark = False
+        self._health_segments: tuple[tuple[str, int, QColor], ...] = ()
+        self._trend_points: tuple[tuple[object, int], ...] = ()
+
+    @property
+    def legend_visible(self) -> bool:
+        return self._chart_id == "health"
+
+    @property
+    def points_visible(self) -> bool:
+        return len(self._trend_points) > 1
+
+    @property
+    def rendered_point_count(self) -> int:
+        return 2 if len(self._trend_points) == 1 else len(self._trend_points)
+
+    @property
+    def y_max(self) -> int:
+        maximum = max((count for _timestamp, count in self._trend_points), default=0)
+        return max(1, maximum + max(1, round(maximum * 0.15)))
+
+    def set_theme(self, dark: bool) -> None:
+        self._dark = bool(dark)
+        self.update()
+
+    def set_health_data(self, values: Sequence[tuple[str, int]]) -> None:
+        self._health_segments = tuple(
+            (label, count, QColor(self._COLORS[index % len(self._COLORS)]))
+            for index, (label, count) in enumerate(values)
+            if count > 0
+        )
+        self.update()
+
+    def set_trend_data(self, values: Sequence[tuple[object, int]]) -> None:
+        self._trend_points = tuple(
+            (timestamp, max(0, int(count))) for timestamp, count in values
+        )
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._chart_id == "health":
+            self._draw_health(painter)
+        else:
+            self._draw_trend(painter)
+
+    def _draw_health(self, painter: QPainter) -> None:
+        foreground = QColor("#e5eaf2" if self._dark else "#172033")
+        muted = QColor("#8c99ad" if self._dark else "#718096")
+        track = QColor("#2b374a" if self._dark else "#e8edf4")
+        content = QRectF(self.rect()).adjusted(9, 7, -9, -7)
+        legend_height = min(58.0, content.height() * 0.34)
+        diameter = max(
+            68.0,
+            min(content.width() * 0.42, content.height() - legend_height - 4),
+        )
+        ring = QRectF(
+            content.center().x() - diameter / 2,
+            content.top(),
+            diameter,
+            diameter,
+        )
+        ring_width = max(12.0, diameter * 0.13)
+        pen = QPen(track, ring_width)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawArc(ring, 0, 360 * 16)
+
+        total = sum(count for _label, count, _color in self._health_segments)
+        start = 90 * 16
+        if total:
+            for _label, count, color in self._health_segments:
+                span = -round(360 * 16 * count / total)
+                painter.setPen(
+                    QPen(
+                        color,
+                        ring_width,
+                        Qt.PenStyle.SolidLine,
+                        Qt.PenCapStyle.RoundCap,
+                    )
+                )
+                painter.drawArc(ring, start, span)
+                start += span
+
+        center_font = painter.font()
+        center_font.setBold(True)
+        center_font.setPointSize(max(10, center_font.pointSize()))
+        painter.setFont(center_font)
+        painter.setPen(foreground)
+        painter.drawText(ring, Qt.AlignmentFlag.AlignCenter, str(total))
+
+        segments = self._health_segments or (("暂无账号", 0, track),)
+        legend_top = ring.bottom() + 8
+        column_width = content.width() / 2
+        row_height = 18.0
+        label_font = painter.font()
+        label_font.setBold(False)
+        label_font.setPointSize(max(8, label_font.pointSize() - 1))
+        painter.setFont(label_font)
+        metrics = QFontMetrics(label_font)
+        for index, (label, count, color) in enumerate(segments[:6]):
+            row, column = divmod(index, 2)
+            x = content.left() + column * column_width
+            y = legend_top + row * row_height
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawEllipse(QPointF(x + 4, y + 7), 4, 4)
+            painter.setPen(muted)
+            text = metrics.elidedText(
+                f"{label}  {count}",
+                Qt.TextElideMode.ElideRight,
+                int(column_width - 18),
+            )
+            painter.drawText(
+                QRectF(x + 13, y - 2, column_width - 15, row_height),
+                Qt.AlignmentFlag.AlignVCenter,
+                text,
+            )
+
+    def _draw_trend(self, painter: QPainter) -> None:
+        foreground = QColor("#d5dce7" if self._dark else "#475569")
+        muted = QColor("#7f8b9d" if self._dark else "#94a3b8")
+        grid = QColor("#2b374a" if self._dark else "#e8edf4")
+        accent = QColor("#60a5fa" if self._dark else "#2563eb")
+        plot = QRectF(self.rect()).adjusted(42, 10, -12, -27)
+        if plot.width() <= 20 or plot.height() <= 20:
+            return
+
+        painter.setPen(QPen(grid, 1))
+        for step in range(5):
+            y = plot.bottom() - plot.height() * step / 4
+            painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+
+        label_font = painter.font()
+        label_font.setPointSize(max(8, label_font.pointSize() - 1))
+        painter.setFont(label_font)
+        painter.setPen(muted)
+        y_max = self.y_max
+        for step in (0, 2, 4):
+            value = round(y_max * step / 4)
+            y = plot.bottom() - plot.height() * step / 4
+            painter.drawText(
+                QRectF(0, y - 9, plot.left() - 7, 18),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                str(value),
+            )
+
+        if not self._trend_points:
+            painter.setPen(foreground)
+            painter.drawText(plot, Qt.AlignmentFlag.AlignCenter, "暂无收件数据")
+            return
+
+        timestamps = [timestamp for timestamp, _count in self._trend_points]
+        values = [count for _timestamp, count in self._trend_points]
+        if len(values) == 1:
+            y = plot.bottom() - plot.height() * values[0] / y_max
+            points = (QPointF(plot.left(), y), QPointF(plot.right(), y))
+        else:
+            points = tuple(
+                QPointF(
+                    plot.left() + plot.width() * index / (len(values) - 1),
+                    plot.bottom() - plot.height() * count / y_max,
+                )
+                for index, count in enumerate(values)
+            )
+
+        path = QPainterPath(points[0])
+        for point in points[1:]:
+            path.lineTo(point)
+        painter.setPen(
+            QPen(
+                accent,
+                2.2,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
+        )
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+        if self.points_visible:
+            painter.setPen(QPen(accent, 1.5))
+            painter.setBrush(QColor("#151d2a" if self._dark else "#ffffff"))
+            for point in points:
+                painter.drawEllipse(point, 3.2, 3.2)
+
+        indices = sorted({0, len(timestamps) // 2, len(timestamps) - 1})
+        metrics = QFontMetrics(label_font)
+        for index in indices:
+            timestamp = timestamps[index]
+            text = (
+                timestamp.strftime("%m-%d %H:%M")
+                if hasattr(timestamp, "strftime")
+                else str(timestamp)
+            )
+            width = metrics.horizontalAdvance(text) + 8
+            ratio = index / max(1, len(timestamps) - 1)
+            x = plot.left() + plot.width() * ratio
+            x = max(plot.left(), min(plot.right() - width, x - width / 2))
+            painter.setPen(muted)
+            painter.drawText(
+                QRectF(x, plot.bottom() + 5, width, 18),
+                Qt.AlignmentFlag.AlignCenter,
+                text,
+            )
 
 
 class DashboardWidget(QWidget):
@@ -552,7 +781,7 @@ class DashboardWidget(QWidget):
     @staticmethod
     def _chart_card(
         chart_id: str, title: str, caption: str
-    ) -> tuple[QFrame, QChartView]:
+    ) -> tuple[QFrame, _DashboardChart]:
         card = QFrame()
         card.setObjectName("dashboardChartPanel")
         card.setProperty("chartId", chart_id)
@@ -564,12 +793,7 @@ class DashboardWidget(QWidget):
         title_label.setObjectName("dashboardPanelTitle")
         caption_label = QLabel(caption)
         caption_label.setObjectName("dashboardPanelCaption")
-        chart_view = QChartView()
-        chart_view.setObjectName("dashboardChartView")
-        chart_view.setProperty("chartId", chart_id)
-        chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        chart_view.setMinimumHeight(190)
-        chart_view.setStyleSheet("background: transparent; border: 0;")
+        chart_view = _DashboardChart(chart_id)
         card_layout.addWidget(title_label)
         card_layout.addWidget(caption_label)
         card_layout.addWidget(chart_view, 1)
@@ -577,6 +801,8 @@ class DashboardWidget(QWidget):
 
     def apply_theme(self, dark: bool) -> None:
         self._dark = dark
+        self.health_chart.set_theme(dark)
+        self.rate_chart.set_theme(dark)
         self.refresh_button.setIcon(
             line_icon("refresh", "#94a3b8" if dark else "#64748b", 17)
         )
@@ -687,65 +913,15 @@ class DashboardWidget(QWidget):
         self._update_proxy_card()
         self._refresh_recent_messages()
 
-        pie_series = QPieSeries()
-        pie_series.setHoleSize(0.58)
-        for status, count in stats.status_counts.items():
-            if count:
-                pie_series.append(f"{STATUS_LABELS[status]}  {count}", count)
-        if not pie_series.count():
-            pie_series.append("暂无账号", 1)
-        health = self._new_chart()
-        health.addSeries(pie_series)
-        health.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
-        health.legend().setMarkerShape(health.legend().MarkerShape.MarkerShapeCircle)
-        self.health_chart.setChart(health)
-
-        line_series = QLineSeries()
-        line_series.setPen(QPen(QColor("#60a5fa" if self._dark else "#2563eb"), 2.2))
         trend_points = stats.messages_per_hour
-        if len(trend_points) == 1:
-            timestamp, count = trend_points[0]
-            center_ms = int(timestamp.timestamp() * 1000)
-            half_bucket_ms = 30 * 60 * 1000
-            # A single hourly bucket has no neighbouring point to form a line.
-            # Render its one-hour span instead of leaving a detached square marker.
-            line_series.append(center_ms - half_bucket_ms, count)
-            line_series.append(center_ms + half_bucket_ms, count)
-            line_series.setPointsVisible(False)
-        else:
-            line_series.setPointsVisible(bool(trend_points))
-            for timestamp, count in trend_points:
-                line_series.append(timestamp.timestamp() * 1000, count)
-        rate = self._new_chart()
-        rate.addSeries(line_series)
-        # The trend series has no user-facing name.  Keeping its legend visible
-        # leaves a lone blue square floating above the plot, which looks like a
-        # rendering error rather than a chart key.
-        rate.legend().hide()
-        x_axis = QDateTimeAxis()
-        x_axis.setFormat("MM-dd HH:mm")
-        x_axis.setTickCount(5)
-        y_axis = QValueAxis()
-        y_axis.setLabelFormat("%d")
-        y_axis.setMin(0)
-        y_axis.setTickCount(5)
-        rate.addAxis(x_axis, Qt.AlignmentFlag.AlignBottom)
-        rate.addAxis(y_axis, Qt.AlignmentFlag.AlignLeft)
-        line_series.attachAxis(x_axis)
-        line_series.attachAxis(y_axis)
-        if not trend_points:
-            now = QDateTime.currentDateTime()
-            x_axis.setRange(now.addSecs(-3600), now)
-            y_axis.setRange(0, 1)
-            y_axis.setTickCount(2)
-        elif len(trend_points) == 1:
-            timestamp, count = trend_points[0]
-            point = QDateTime.fromMSecsSinceEpoch(int(timestamp.timestamp() * 1000))
-            x_axis.setRange(point.addSecs(-2400), point.addSecs(2400))
-            y_max = max(1, count + max(1, round(count * 0.15)))
-            y_axis.setRange(0, y_max)
-            y_axis.setTickCount(min(5, y_max + 1))
-        self.rate_chart.setChart(rate)
+        self.health_chart.set_health_data(
+            tuple(
+                (STATUS_LABELS[status], count)
+                for status, count in stats.status_counts.items()
+                if count
+            )
+        )
+        self.rate_chart.set_trend_data(trend_points)
 
     def _refresh_recent_messages(self) -> None:
         hits = self._messages.list_with_accounts(limit=6)
@@ -778,15 +954,3 @@ class DashboardWidget(QWidget):
         value = item.data(Qt.ItemDataRole.UserRole)
         if isinstance(value, tuple) and len(value) == 2 and value[0]:
             self.recentMessageRequested.emit(int(value[0]), int(value[1]))
-
-    def _new_chart(self) -> QChart:
-        chart = QChart()
-        chart.setTheme(
-            QChart.ChartTheme.ChartThemeDark
-            if self._dark
-            else QChart.ChartTheme.ChartThemeLight
-        )
-        chart.setBackgroundVisible(False)
-        chart.setPlotAreaBackgroundVisible(False)
-        chart.setMargins(QMargins(4, 5, 4, 2))
-        return chart

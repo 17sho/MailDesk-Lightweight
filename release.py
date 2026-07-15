@@ -51,13 +51,7 @@ RUNTIME_DISTRIBUTIONS = (
     "cffi",
     "pycparser",
     "typing_extensions",
-    "Brotli",
-    "zstandard",
     "attrs",
-    "outcome",
-    "sortedcontainers",
-    "trio",
-    "wsproto",
     "packaging",
     "setuptools",
 )

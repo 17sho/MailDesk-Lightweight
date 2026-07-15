@@ -488,7 +488,7 @@ class EnterpriseSettingsDialog(QDialog):
         font_form = self._add_card(
             layout,
             "全局文字",
-            "标题仍会保留层级差异；正文、按钮、表格和菜单会使用下面的基础设置。",
+            "正文会使用下面的基础设置；标题、工具栏和菜单会自动保持清晰的字重层级。",
         )
         self.font_family = QComboBox()
         self.font_family.addItem("跟随系统推荐字体", "")
@@ -518,7 +518,6 @@ class EnterpriseSettingsDialog(QDialog):
             ("标准", 400),
             ("清晰（推荐）", 500),
             ("半粗", 600),
-            ("粗体", 700),
         ):
             self.font_weight.addItem(label, weight)
         self.font_weight.setCurrentIndex(

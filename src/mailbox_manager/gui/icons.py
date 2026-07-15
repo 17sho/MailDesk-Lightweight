@@ -73,6 +73,8 @@ _PATHS = {
         <path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5"/>
         <path d="M14 8l4 4-4 4m4-4H8"/>
     """,
+    "close": '<path d="M6 6l12 12M18 6 6 18"/>',
+    "chevron-right": '<path d="m9 5 7 7-7 7"/>',
     "moon": '<path d="M19 15.5A8 8 0 0 1 8.5 5a8.2 8.2 0 1 0 10.5 10.5z"/>',
     "sun": """
         <circle cx="12" cy="12" r="3.5"/>

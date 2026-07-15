@@ -15,11 +15,10 @@ SVG_ICON = ROOT / "src" / "mailbox_manager" / "assets" / "app.svg"
 ICO_ICON = ROOT / "assets" / "app.ico"
 SPEC_FILE = ROOT / "mailbox-manager.spec"
 WEBENGINE_LOCALES = frozenset(
-    {"en-gb.pak", "en-us.pak", "zh-cn.pak", "zh-tw.pak"}
+    {"en-us.pak", "zh-cn.pak"}
 )
 WINDOWS_QT_PYTHON_BINDINGS = frozenset(
     {
-        "qtcharts.pyd",
         "qtcore.pyd",
         "qtgui.pyd",
         "qtnetwork.pyd",
@@ -33,12 +32,10 @@ WINDOWS_QT_PYTHON_BINDINGS = frozenset(
 )
 WINDOWS_QT_RUNTIME_DLLS = frozenset(
     {
-        "qt6charts.dll",
         "qt6core.dll",
         "qt6gui.dll",
         "qt6network.dll",
         "qt6opengl.dll",
-        "qt6openglwidgets.dll",
         "qt6positioning.dll",
         "qt6printsupport.dll",
         "qt6qml.dll",
@@ -54,6 +51,26 @@ WINDOWS_QT_RUNTIME_DLLS = frozenset(
         "qt6widgets.dll",
     }
 )
+WINDOWS_QT_PLUGIN_DLLS = frozenset(
+    {
+        "qcertonlybackend.dll",
+        "qgif.dll",
+        "qicns.dll",
+        "qico.dll",
+        "qjpeg.dll",
+        "qmodernwindowsstyle.dll",
+        "qnetworklistmanager.dll",
+        "qpdf.dll",
+        "qschannelbackend.dll",
+        "qsvg.dll",
+        "qsvgicon.dll",
+        "qtga.dll",
+        "qtiff.dll",
+        "qwbmp.dll",
+        "qwebp.dll",
+        "qwindows.dll",
+    }
+)
 
 
 def should_include_qt_payload(destination: str) -> bool:
@@ -61,9 +78,10 @@ def should_include_qt_payload(destination: str) -> bool:
 
     normalized = destination.replace("\\", "/").casefold()
     filename = normalized.rsplit("/", 1)[-1]
-    # MailDesk uses Qt Widgets, Qt Charts and QtWebEngineWidgets, not Qt Quick.
-    # Besides adding hundreds of megabytes, the QML style image hierarchy can
-    # exceed Windows MAX_PATH inside the verified updater staging directory.
+    # MailDesk uses Qt Widgets and QtWebEngineWidgets. WebEngine itself links
+    # against the QML/Quick DLLs, but it does not need the large QML component
+    # source hierarchy. Keeping that distinction avoids both startup crashes
+    # and Windows MAX_PATH failures in verified updater staging directories.
     if "pyside6/qml/" in normalized:
         return False
     if "pyside6/plugins/qmltooling/" in normalized:
@@ -78,7 +96,9 @@ def should_include_qt_payload(destination: str) -> bool:
     if "pyside6/translations/qtwebengine_locales/" in normalized:
         return filename in WEBENGINE_LOCALES
     if "pyside6/translations/" in normalized and filename.endswith(".qm"):
-        return filename.endswith(("_zh_cn.qm", "_zh_tw.qm"))
+        return filename.endswith("_zh_cn.qm")
+    if "pyside6/plugins/" in normalized and filename.endswith(".dll"):
+        return filename in WINDOWS_QT_PLUGIN_DLLS
     if normalized.startswith("pyside6/"):
         relative = normalized.removeprefix("pyside6/")
         if "/" not in relative and filename.endswith(".pyd"):

@@ -8,6 +8,7 @@ import sys
 from contextlib import suppress
 from pathlib import Path
 
+import httpx
 from PySide6.QtCore import QLibraryInfo, QLocale, QLockFile, QTimer, QTranslator
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
@@ -213,6 +214,11 @@ def schedule_startup_probe(
         return False
 
     def run_probe() -> None:
+        # Exercise optional-import boundaries used by packaged Graph/OAuth and
+        # SOCKS routes without making an external request.
+        with httpx.Client():
+            __import__("socks")
+            __import__("socksio")
         window.message_body.setPlainText("MailDesk packaged WebEngine probe")
         logger.info("MailDesk WebEngine startup probe passed")
         QTimer.singleShot(250, window.request_quit)

@@ -35,12 +35,20 @@ def test_windows_build_excludes_unused_qml_payload_and_keeps_webengine() -> None
     assert should_include_qt_payload("PySide6/resources/qtwebengine_resources.pak")
     assert should_include_qt_payload("PySide6/Qt6WebEngineCore.dll")
     assert should_include_qt_payload("PySide6/Qt6Quick.dll")
+    assert not should_include_qt_payload("PySide6/QtCharts.pyd")
+    assert not should_include_qt_payload("PySide6/Qt6Charts.dll")
+    assert not should_include_qt_payload("PySide6/Qt6OpenGLWidgets.dll")
     assert not should_include_qt_payload("PySide6/Qt6Quick3D.dll")
     assert not should_include_qt_payload("PySide6/Qt6Pdf.dll")
     assert not should_include_qt_payload("PySide6/QtQuick3D.pyd")
     assert not should_include_qt_payload(
         "PySide6/plugins/qmltooling/qmldbg_profiler.dll"
     )
+    assert should_include_qt_payload("PySide6/plugins/platforms/qwindows.dll")
+    assert should_include_qt_payload("PySide6/plugins/imageformats/qwebp.dll")
+    assert not should_include_qt_payload("PySide6/plugins/platforms/qdirect2d.dll")
+    assert not should_include_qt_payload("PySide6/plugins/platforms/qoffscreen.dll")
+    assert not should_include_qt_payload("PySide6/plugins/tls/qopensslbackend.dll")
     assert should_include_qt_payload("PySide6/translations/qtbase_zh_CN.qm")
     assert not should_include_qt_payload("PySide6/translations/qtbase_de.qm")
 
@@ -72,7 +80,7 @@ def test_pyinstaller_spec_embeds_release_version_resource() -> None:
     )
 
     assert 'version=str(ROOT / "assets" / "version_info.txt")' in spec
-    assert "filevers=(0, 3, 9, 0)" in version_info
-    assert "prodvers=(0, 3, 9, 0)" in version_info
-    assert "StringStruct(u'FileVersion', u'0.3.9.0')" in version_info
-    assert "StringStruct(u'ProductVersion', u'0.3.9.0')" in version_info
+    assert "filevers=(0, 4, 0, 0)" in version_info
+    assert "prodvers=(0, 4, 0, 0)" in version_info
+    assert "StringStruct(u'FileVersion', u'0.4.0.0')" in version_info
+    assert "StringStruct(u'ProductVersion', u'0.4.0.0')" in version_info

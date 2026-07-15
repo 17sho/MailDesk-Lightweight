@@ -6,7 +6,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QAbstractAnimation, Qt, QUrl
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QAbstractSpinBox,
@@ -349,6 +349,35 @@ def test_close_window_dialog_returns_choice_and_remember_flag(qtbot) -> None:
     assert dialog.result() == QDialog.DialogCode.Accepted
     assert dialog.selected_action == CLOSE_ACTION_TRAY
     assert dialog.remember_choice is True
+
+
+def test_close_window_dialog_is_compact_and_font_responsive(qtbot) -> None:
+    dialog = CloseWindowDialog(tray_available=True)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.wait(20)
+
+    assert dialog.height() < 400
+    assert dialog.width() <= 560
+    assert dialog.tray_button.height() >= dialog.tray_button.sizeHint().height()
+    assert dialog.exit_button.height() >= dialog.exit_button.sizeHint().height()
+
+    large_font = QFont(dialog.font())
+    large_font.setPointSize(18)
+    dialog.setFont(large_font)
+    dialog.adjustSize()
+    qtbot.wait(20)
+
+    assert dialog.tray_button.height() >= dialog.tray_button.sizeHint().height()
+    assert dialog.exit_button.height() >= dialog.exit_button.sizeHint().height()
+
+
+def test_close_window_dialog_disables_unavailable_tray_option(qtbot) -> None:
+    dialog = CloseWindowDialog(tray_available=False)
+    qtbot.addWidget(dialog)
+
+    assert dialog.tray_button.isEnabled() is False
+    assert dialog.tray_button.description_label.text() == "当前系统没有可用的系统托盘"
 
 
 def test_close_choice_can_be_remembered_and_minimizes_to_tray(

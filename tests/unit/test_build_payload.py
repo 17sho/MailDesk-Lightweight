@@ -21,14 +21,12 @@ def test_qt_payload_filter_removes_webengine_debug_and_devtools_resources() -> N
 
 
 def test_qt_payload_filter_keeps_only_supported_webengine_locales() -> None:
-    for locale in ("en-GB.pak", "en-US.pak", "zh-CN.pak", "zh-TW.pak"):
+    for locale in ("en-US.pak", "zh-CN.pak"):
         assert should_include_qt_payload(
             f"PySide6/translations/qtwebengine_locales/{locale}"
         )
-    assert (
-        should_include_qt_payload(
-            "PySide6/translations/qtwebengine_locales/fr.pak"
+    for locale in ("en-GB.pak", "zh-TW.pak", "fr.pak"):
+        assert not should_include_qt_payload(
+            f"PySide6/translations/qtwebengine_locales/{locale}"
         )
-        is False
-    )
     assert should_include_qt_payload("certifi/cacert.pem")

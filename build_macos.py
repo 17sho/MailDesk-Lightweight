@@ -35,13 +35,11 @@ _QTWEBENGINE_FRAMEWORK_PREFIX = (
 )
 _MACOS_QT_FRAMEWORKS = frozenset(
     {
-        "qtcharts",
         "qtcore",
         "qtdbus",
         "qtgui",
         "qtnetwork",
         "qtopengl",
-        "qtopenglwidgets",
         "qtpositioning",
         "qtprintsupport",
         "qtqml",
@@ -59,7 +57,6 @@ _MACOS_QT_FRAMEWORKS = frozenset(
 )
 _MACOS_QT_BINDINGS = frozenset(
     {
-        "qtcharts",
         "qtcore",
         "qtgui",
         "qtnetwork",

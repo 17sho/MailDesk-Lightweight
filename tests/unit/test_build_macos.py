@@ -61,6 +61,10 @@ def test_macos_payload_filter_keeps_reader_frameworks_and_drops_large_extras() -
     )
     assert should_include_macos_qt_payload("PySide6/QtWebEngineWidgets.abi3.so")
     assert not should_include_macos_qt_payload(
+        "PySide6/Qt/lib/QtCharts.framework/Versions/A/QtCharts"
+    )
+    assert not should_include_macos_qt_payload("PySide6/QtCharts.abi3.so")
+    assert not should_include_macos_qt_payload(
         "PySide6/Qt/lib/QtMultimedia.framework/Versions/A/QtMultimedia"
     )
     assert not should_include_macos_qt_payload(

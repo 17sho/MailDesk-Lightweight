@@ -10,7 +10,7 @@ DEFAULT_FONT_SIZE = 10
 DEFAULT_FONT_WEIGHT = 500
 MIN_FONT_SIZE = 9
 MAX_FONT_SIZE = 18
-SUPPORTED_FONT_WEIGHTS = (400, 500, 600, 700)
+SUPPORTED_FONT_WEIGHTS = (400, 500, 600)
 
 _FONT_SIZE_PATTERN = re.compile(r"(font-size\s*:\s*)(\d+)(px)", re.IGNORECASE)
 
@@ -38,14 +38,20 @@ def normalized_appearance(values: Mapping[str, object] | None) -> dict[str, obje
 
 
 def scaled_stylesheet(stylesheet: str, font_size: int) -> str:
-    """Scale explicit pixel text sizes while preserving layout dimensions."""
+    """Adjust themed text by the user's base-size delta.
+
+    Proportional scaling made a 25 px heading grow to 45 px when the base font
+    was set to 18 pt.  Adding the base-size delta keeps the established visual
+    hierarchy while allowing Qt's layouts and the application font to handle
+    accessibility sizing once.
+    """
 
     bounded = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, int(font_size)))
-    scale = bounded / DEFAULT_FONT_SIZE
+    delta = bounded - DEFAULT_FONT_SIZE
 
     def replace(match: re.Match[str]) -> str:
         source = int(match.group(2))
-        target = max(9, round(source * scale))
+        target = max(9, source + delta)
         return f"{match.group(1)}{target}{match.group(3)}"
 
     return _FONT_SIZE_PATTERN.sub(replace, stylesheet)
