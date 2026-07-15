@@ -37,6 +37,7 @@ _MACOS_QT_FRAMEWORKS = frozenset(
     {
         "qtcharts",
         "qtcore",
+        "qtdbus",
         "qtgui",
         "qtnetwork",
         "qtopengl",
