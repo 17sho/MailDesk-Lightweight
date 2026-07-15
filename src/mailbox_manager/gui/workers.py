@@ -295,6 +295,32 @@ class UpdateCheckWorker(QRunnable):
             self.signals.finished.emit()
 
 
+class UpdateInstallSignals(QObject):
+    result = Signal(object, object)
+    finished = Signal()
+
+
+class UpdateInstallWorker(QRunnable):
+    """Verify staged files and hand off to the updater without blocking Qt."""
+
+    def __init__(self, service: UpdateService, staged: StagedUpdate) -> None:
+        super().__init__()
+        self.service = service
+        self.staged = staged
+        self.signals = UpdateInstallSignals()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            plan = self.service.create_installer_plan(self.staged)
+            self.service.launch_installer(plan)
+            self.signals.result.emit(plan, None)
+        except Exception as exc:
+            self.signals.result.emit(None, exc)
+        finally:
+            self.signals.finished.emit()
+
+
 class UpdateDownloadSignals(QObject):
     progress = Signal(str, int, object)
     status = Signal(str, str)

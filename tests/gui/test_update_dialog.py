@@ -127,8 +127,15 @@ def test_download_complete_prompts_for_restart_and_install(qtbot) -> None:
 
     assert install_spy.count() == 1
     assert install_spy.at(0)[0] == "0.3.0"
+    assert dialog.primary_button.isEnabled() is True
+    assert dialog.primary_button.text() == "重启并安装"
+
+    dialog.set_install_status("正在校验安装文件")
+
     assert dialog.primary_button.isEnabled() is False
-    assert dialog.primary_button.text() == "正在启动安装…"
+    assert dialog.primary_button.text() == "正在准备安装…"
+    assert dialog.later_button.isEnabled() is False
+    assert dialog.progress_status_label.text() == "正在校验安装文件"
 
 
 def test_download_error_is_recoverable(qtbot) -> None:

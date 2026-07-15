@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMessageBox
 
 from mailbox_manager.app import create_main_window
@@ -43,6 +45,19 @@ class FakeUpdateService:
 
     def launch_installer(self, plan: object) -> None:
         self.launched_plan = plan
+
+
+class BlockingInstallService(FakeUpdateService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.install_started = threading.Event()
+        self.allow_install = threading.Event()
+
+    def create_installer_plan(self, staged: StagedUpdate) -> object:
+        self.install_started.set()
+        if not self.allow_install.wait(timeout=5):
+            raise TimeoutError("test installer was not released")
+        return super().create_installer_plan(staged)
 
 
 def _window(qtbot, tmp_path: Path) -> tuple[MainWindow, SettingsRepository]:
@@ -117,7 +132,7 @@ def test_application_composition_enables_startup_update_checks(qtbot, tmp_path) 
     window._startup_update_timer.stop()
 
     assert window._update_service is not None
-    assert window._update_service.current_version == "0.3.1"
+    assert window._update_service.current_version == "0.3.2"
     assert window._update_service.updates_dir == paths.updates
     assert window.check_updates_action.isEnabled()
 
@@ -204,10 +219,49 @@ def test_install_requires_final_confirmation_then_launches_helper(
 
     window._confirm_update_install("0.4.0")
     qtbot.waitUntil(lambda: service.launched_plan is not None, timeout=1500)
+    qtbot.waitUntil(lambda: quit_requested == [True], timeout=1500)
 
     assert service.created_with is staged
     assert service.launched_plan is not None
     assert quit_requested == [True]
+
+
+def test_install_file_verification_does_not_block_the_gui(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    window, _settings = _window(qtbot, tmp_path)
+    service = BlockingInstallService()
+    window._update_service = service  # type: ignore[assignment]
+    update = _update_info()
+    service.check_result = update
+    staged = StagedUpdate(update, tmp_path / "stage", tmp_path / "stage" / "MailDesk.exe")
+    window._update_info = update
+    window._staged_update = staged
+    window._update_download_identity = window._update_identity(update)
+    window._show_update_dialog()
+    assert window._update_dialog is not None
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    quit_requested: list[bool] = []
+    monkeypatch.setattr(window, "request_quit", lambda: quit_requested.append(True))
+
+    window._confirm_update_install("0.4.0")
+    qtbot.waitUntil(service.install_started.is_set, timeout=1500)
+    gui_callback_ran: list[bool] = []
+    QTimer.singleShot(0, lambda: gui_callback_ran.append(True))
+    qtbot.waitUntil(lambda: bool(gui_callback_ran), timeout=500)
+
+    assert window._update_install_worker is not None
+    assert window._update_dialog.primary_button.text() == "正在准备安装…"
+    assert "后台核对" in window._update_dialog.progress_detail_label.text()
+    assert quit_requested == []
+
+    service.allow_install.set()
+    qtbot.waitUntil(lambda: service.launched_plan is not None, timeout=1500)
+    qtbot.waitUntil(lambda: quit_requested == [True], timeout=1500)
 
 
 def test_stale_download_result_cannot_replace_active_update(qtbot, tmp_path) -> None:

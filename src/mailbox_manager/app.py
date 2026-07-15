@@ -7,7 +7,7 @@ import re
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
+from PySide6.QtCore import QLibraryInfo, QLocale, QLockFile, QTranslator
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
@@ -152,6 +152,16 @@ def report_update_health(paths: AppPaths) -> bool:
     return True
 
 
+def acquire_instance_lock(paths: AppPaths) -> QLockFile | None:
+    """Prevent concurrent processes from sharing the same database and updater."""
+
+    paths.root.mkdir(parents=True, exist_ok=True)
+    lock = QLockFile(str(paths.root / ".instance.lock"))
+    if not lock.tryLock(100):
+        return None
+    return lock
+
+
 def run() -> int:
     application = QApplication.instance() or QApplication(sys.argv)
     application.setApplicationName("MailDesk")
@@ -164,9 +174,20 @@ def run() -> int:
         application.setWindowIcon(QIcon(str(icon_path)))
     paths = AppPaths.for_current_user()
     logger = configure_logging(paths.logs)
+    instance_lock = acquire_instance_lock(paths)
+    if instance_lock is None:
+        logger.warning("MailDesk startup blocked because another instance is active")
+        QMessageBox.information(
+            None,
+            "MailDesk 已在运行",
+            "检测到另一个 MailDesk 实例正在运行。\n\n"
+            "请从任务栏或系统托盘打开已有窗口；更新前请先退出其他实例。",
+        )
+        return 0
     try:
         window = create_main_window(paths)
     except Exception:
+        instance_lock.unlock()
         logger.exception("应用初始化失败")
         QMessageBox.critical(None, "MailDesk 启动失败", "无法初始化安全存储，请查看本地日志。")
         return 1
@@ -204,5 +225,6 @@ def run() -> int:
             "您可以继续使用当前版本，并稍后重新检查更新。",
         )
     code = application.exec()
+    instance_lock.unlock()
     logging.shutdown()
     return code

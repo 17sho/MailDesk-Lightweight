@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from mailbox_manager.app import report_update_health
+from mailbox_manager.app import acquire_instance_lock, report_update_health
 from mailbox_manager.config import AppPaths
 
 
@@ -48,3 +48,24 @@ def test_update_health_marker_is_restricted_to_update_staging(
     with pytest.raises(ValueError, match="路径无效"):
         report_update_health(paths)
     assert not outside.exists()
+
+
+def test_instance_lock_allows_only_one_process_per_data_directory(tmp_path) -> None:
+    paths = AppPaths(
+        root=tmp_path / "MailDesk",
+        database=tmp_path / "MailDesk" / "maildesk.db",
+        key_file=tmp_path / "MailDesk" / "master.key.dpapi",
+        logs=tmp_path / "MailDesk" / "logs",
+        eml=tmp_path / "MailDesk" / "eml",
+    )
+
+    first = acquire_instance_lock(paths)
+    assert first is not None
+    try:
+        assert acquire_instance_lock(paths) is None
+    finally:
+        first.unlock()
+
+    replacement = acquire_instance_lock(paths)
+    assert replacement is not None
+    replacement.unlock()

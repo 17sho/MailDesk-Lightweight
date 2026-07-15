@@ -54,7 +54,13 @@ def ensure_icon(source: Path = SVG_ICON, target: Path = ICO_ICON) -> None:
         raise RuntimeError("当前 Qt 环境无法生成 Windows ICO 图标")
 
 
-def build(mode: str, *, clean: bool = False) -> None:
+def build(
+    mode: str,
+    *,
+    clean: bool = False,
+    dist_path: Path | None = None,
+    work_path: Path | None = None,
+) -> None:
     mode = validate_mode(mode)
     ensure_icon()
     environment = os.environ.copy()
@@ -62,9 +68,14 @@ def build(mode: str, *, clean: bool = False) -> None:
     command = [sys.executable, "-m", "PyInstaller", "--noconfirm"]
     if clean:
         command.append("--clean")
+    if dist_path is not None:
+        command.extend(("--distpath", str(dist_path.resolve())))
+    if work_path is not None:
+        command.extend(("--workpath", str((work_path / mode).resolve())))
     command.append(str(SPEC_FILE))
     subprocess.run(command, cwd=ROOT, env=environment, check=True)
-    output = ROOT / "dist" / ("MailDesk.exe" if mode == "onefile" else "MailDesk")
+    output_root = dist_path.resolve() if dist_path is not None else ROOT / "dist"
+    output = output_root / ("MailDesk.exe" if mode == "onefile" else "MailDesk")
     print(f"构建完成：{output}")
 
 
@@ -72,9 +83,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build MailDesk for Windows with PyInstaller")
     parser.add_argument("--mode", choices=("onefile", "onedir"), default="onedir")
     parser.add_argument("--clean", action="store_true", help="清理 PyInstaller 缓存后构建")
+    parser.add_argument("--dist-path", type=Path, help="自定义构建输出目录")
+    parser.add_argument("--work-path", type=Path, help="自定义 PyInstaller 临时目录")
     arguments = parser.parse_args()
     try:
-        build(arguments.mode, clean=arguments.clean)
+        build(
+            arguments.mode,
+            clean=arguments.clean,
+            dist_path=arguments.dist_path,
+            work_path=arguments.work_path,
+        )
     except (RuntimeError, subprocess.CalledProcessError, ValueError) as exc:
         print(f"构建失败：{exc}", file=sys.stderr)
         return 1

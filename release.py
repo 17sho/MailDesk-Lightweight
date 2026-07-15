@@ -243,12 +243,17 @@ def _write_archive(
 
 
 def build_release_archives(
-    *, root: Path = ROOT, output: Path = DEFAULT_OUTPUT, version: str | None = None
+    *,
+    root: Path = ROOT,
+    output: Path = DEFAULT_OUTPUT,
+    version: str | None = None,
+    dist: Path | None = None,
 ) -> tuple[Path, Path, Path]:
     version = version or project_version(root)
     expected_version = (*map(int, version.split(".")), 0)
-    onefile_exe = root / "dist" / "MailDesk.exe"
-    onedir_root = root / "dist" / "MailDesk"
+    dist_root = dist.resolve() if dist is not None else root / "dist"
+    onefile_exe = dist_root / "MailDesk.exe"
+    onedir_root = dist_root / "MailDesk"
     onedir_exe = onedir_root / "MailDesk.exe"
     for executable in (onefile_exe, onedir_exe):
         if not executable.is_file():
@@ -319,6 +324,7 @@ def main() -> int:
     )
     parser.add_argument("--version", help="必须与 pyproject.toml 一致")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--dist", type=Path, help="包含 onefile 与 onedir 构建结果的目录")
     parser.add_argument(
         "--signing-key",
         type=Path,
@@ -336,7 +342,9 @@ def main() -> int:
     if arguments.signing_key is None:
         parser.error("必须通过 --signing-key 提供离线 Ed25519 发布签名私钥")
     onefile_zip, onedir_zip, checksum_file = build_release_archives(
-        output=arguments.output, version=arguments.version or detected
+        output=arguments.output,
+        version=arguments.version or detected,
+        dist=arguments.dist,
     )
     manifest, signature = build_signed_update_manifest(
         (onefile_zip, onedir_zip),

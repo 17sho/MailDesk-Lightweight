@@ -316,6 +316,19 @@ class UpdateDialog(QDialog):
 
         self._set_state(UpdateDialogState.READY)
 
+    def set_install_status(self, status: str, detail: str = "") -> None:
+        """Show a responsive, non-cancellable installer hand-off state."""
+
+        if self._state is not UpdateDialogState.READY:
+            self._set_state(UpdateDialogState.READY)
+        self.progress_status_label.setText(status.strip() or "正在准备安装")
+        self.progress_detail_label.setText(
+            detail.strip() or "正在校验安装文件，完成后将自动关闭并重新启动。"
+        )
+        self.primary_button.setEnabled(False)
+        self.primary_button.setText("正在准备安装…")
+        self.later_button.setEnabled(False)
+
     def set_download_error(self, message: str) -> None:
         """Show a recoverable error and offer a retry action."""
 
@@ -336,6 +349,7 @@ class UpdateDialog(QDialog):
         self.version_badge.setText(f"v{_plain_version(self.latest_version)}")
         notes = self.release_notes or "此版本未提供更新说明。"
         self.notes_browser.setMarkdown(notes)
+        self.later_button.setEnabled(True)
 
         if self._state is UpdateDialogState.AVAILABLE:
             self.setWindowTitle("发现新版本")
@@ -411,8 +425,6 @@ class UpdateDialog(QDialog):
             self.set_downloading()
             self.downloadRequested.emit(self.latest_version)
         elif self._state is UpdateDialogState.READY:
-            self.primary_button.setEnabled(False)
-            self.primary_button.setText("正在启动安装…")
             self.installRequested.emit(self.latest_version)
 
     def _on_skip(self) -> None:
