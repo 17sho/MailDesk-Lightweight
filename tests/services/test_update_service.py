@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import stat
 import subprocess
 import zipfile
@@ -44,6 +45,50 @@ _TEST_PUBLIC_KEY = _TEST_SIGNING_KEY.public_key().public_bytes(
     serialization.PublicFormat.Raw,
 )
 _SIGNED_FIXTURES: dict[str, bytes] = {}
+
+
+def _compile_update_health_probe(path: Path, *, healthy: bool) -> None:
+    source = path.with_suffix(".cs")
+    health_code = (
+        "var token = Environment.GetEnvironmentVariable(\"MAILDESK_UPDATE_HEALTH_TOKEN\");"
+        "var target = Environment.GetEnvironmentVariable(\"MAILDESK_UPDATE_HEALTH_FILE\");"
+        "if (!String.IsNullOrEmpty(token) && !String.IsNullOrEmpty(target)) "
+        "{ File.WriteAllText(target, token); } Thread.Sleep(6500); return 0;"
+        if healthy
+        else "return 7;"
+    )
+    source.write_text(
+        "using System; using System.IO; using System.Threading; "
+        f"public static class Program {{ public static int Main() {{ {health_code} }} }}",
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment["MAILDESK_TEST_PROBE_SOURCE"] = str(source)
+    environment["MAILDESK_TEST_PROBE_OUTPUT"] = str(path)
+    completed = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "$ErrorActionPreference = 'Stop'; "
+            "Add-Type -Path $env:MAILDESK_TEST_PROBE_SOURCE "
+            "-OutputAssembly $env:MAILDESK_TEST_PROBE_OUTPUT "
+            "-OutputType ConsoleApplication",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=environment,
+    )
+    if completed.returncode != 0 or not path.is_file():
+        diagnostics = "\n".join(
+            output.strip() for output in (completed.stdout, completed.stderr) if output
+        )
+        raise AssertionError(f"Unable to compile update probe: {diagnostics}")
 
 
 def _asset_url(name: str) -> str:
@@ -676,47 +721,48 @@ def test_powershell_helper_replaces_or_rolls_back_real_temp_files(
     service = _service(tmp_path / "service", lambda request: None)
     staging = service.updates_dir / "带 空格 staging"
     staging.mkdir(parents=True)
-    source = staging / "MailDesk.cmd"
-    if healthy:
-        source.write_text(
-            "@echo off\r\n"
-            '<nul set /p="%MAILDESK_UPDATE_HEALTH_TOKEN%" '
-            '> "%MAILDESK_UPDATE_HEALTH_FILE%"\r\n'
-            "ping 127.0.0.1 -n 8 > nul\r\n",
-            encoding="utf-8",
-        )
-    else:
-        source.write_text("@echo off\r\nexit /b 7\r\n", encoding="utf-8")
-    current = tmp_path / "当前 程序" / "MailDesk.cmd"
+    source = staging / "MailDesk.exe"
+    _compile_update_health_probe(source, healthy=healthy)
+    expected_update = source.read_bytes()
+    current = tmp_path / "当前 程序" / "MailDesk.exe"
     current.parent.mkdir(parents=True)
-    original = b"@echo off\r\nexit /b 0\r\n"
-    current.write_bytes(original)
+    system_executable = Path(os.environ.get("WINDIR", r"C:\Windows")) / (
+        "System32/where.exe"
+    )
+    shutil.copy2(system_executable, current)
+    original = current.read_bytes()
     staged = StagedUpdate(update=update, staging_root=staging, source_path=source)
     parent = subprocess.Popen(
         [
             "powershell.exe",
             "-NoProfile",
             "-Command",
-            "Start-Sleep -Milliseconds 250",
+            "Start-Sleep -Seconds 30",
         ]
     )
-    plan = service.create_installer_plan(
-        staged,
-        executable_path=current,
-        parent_pid=parent.pid,
-    )
-    helper = service.launch_installer(plan)
-    assert plan.ready_path is not None
-    assert plan.ready_path.read_text(encoding="utf-8-sig").strip() == plan.health_token
-    service.release_update_lock()
-
+    try:
+        plan = service.create_installer_plan(
+            staged,
+            executable_path=current,
+            parent_pid=parent.pid,
+        )
+        helper = service.launch_installer(plan)
+        assert plan.ready_path is not None
+        assert (
+            plan.ready_path.read_text(encoding="utf-8-sig").strip()
+            == plan.health_token
+        )
+    finally:
+        service.release_update_lock()
+        if parent.poll() is None:
+            parent.terminate()
+        parent.wait(timeout=5)
     return_code = helper.wait(timeout=30)
-    parent.wait(timeout=5)
 
     assert return_code == (0 if healthy else 1)
     assert plan.result_path is not None
     if healthy:
-        assert "MAILDESK_UPDATE_HEALTH_TOKEN" in current.read_text(encoding="utf-8")
+        assert current.read_bytes() == expected_update
         assert plan.result_path.read_text(encoding="utf-8-sig").strip() == "success"
         assert not staging.exists()
     else:
