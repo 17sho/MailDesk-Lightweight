@@ -1,0 +1,173 @@
+name: macOS Preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "macOS preview tag"
+        required: true
+        default: "v0.3.1-macos.1"
+      publish:
+        description: "Create or update the GitHub prerelease after both builds pass"
+        required: true
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*-macos.*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    name: build-${{ matrix.asset_arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            expected_machine: arm64
+            asset_arch: arm64
+          - runner: macos-15-intel
+            expected_machine: x86_64
+            asset_arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu --no-sandbox
+      QTWEBENGINE_DISABLE_SANDBOX: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Verify native runner architecture
+        shell: bash
+        run: |
+          test "$(uname -m)" = "${{ matrix.expected_machine }}"
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+      - name: Ruff
+        run: python -m ruff check src tests build.py build_macos.py release.py
+      - name: Test
+        run: python -m pytest -q
+      - name: Build MailDesk.app
+        run: python build_macos.py --clean
+      - name: Verify app bundle and ad-hoc signature
+        shell: bash
+        run: |
+          test -x dist/MailDesk.app/Contents/MacOS/MailDesk
+          file dist/MailDesk.app/Contents/MacOS/MailDesk
+          file dist/MailDesk.app/Contents/MacOS/MailDesk | grep -q "${{ matrix.expected_machine }}"
+          plutil -lint dist/MailDesk.app/Contents/Info.plist
+          codesign --verify --deep --strict --verbose=2 dist/MailDesk.app
+      - name: Isolated startup smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          data_dir="$RUNNER_TEMP/maildesk-data-${{ matrix.asset_arch }}"
+          stdout_log="$RUNNER_TEMP/maildesk-${{ matrix.asset_arch }}.stdout.log"
+          export MAILDESK_DATA_DIR="$data_dir"
+          mkdir -p "$data_dir"
+          dist/MailDesk.app/Contents/MacOS/MailDesk >"$stdout_log" 2>&1 &
+          app_pid=$!
+          ready=0
+          for _ in $(seq 1 45); do
+            if grep -q "MailDesk started" "$data_dir/logs/app.log" 2>/dev/null; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$app_pid" 2>/dev/null; then
+              cat "$stdout_log"
+              find "$data_dir" -type f -print -exec tail -n 80 {} \; || true
+              exit 1
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != "1" ]]; then
+            cat "$stdout_log"
+            find "$data_dir" -type f -print -exec tail -n 80 {} \; || true
+            kill "$app_pid" 2>/dev/null || true
+            exit 1
+          fi
+          kill "$app_pid" 2>/dev/null || true
+          wait "$app_pid" 2>/dev/null || true
+      - name: Package DMG and ZIP
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          base="MailDesk-v${version}-macos-${{ matrix.asset_arch }}"
+          output="$GITHUB_WORKSPACE/artifacts/macos"
+          stage="$RUNNER_TEMP/$base"
+          mkdir -p "$output" "$stage"
+          ditto dist/MailDesk.app "$stage/MailDesk.app"
+          cp docs/MACOS.md "$stage/MACOS_README.md"
+          cp LICENSE THIRD_PARTY_NOTICES.md "$stage/"
+          mkdir -p "$stage/licenses"
+          cp legal/*.txt "$stage/licenses/"
+          python -c "from pathlib import Path; from release import collect_distribution_licenses; collect_distribution_licenses(Path(r'$stage/licenses/python-packages'))"
+          ditto -c -k --sequesterRsrc --keepParent "$stage" "$output/${base}.zip"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname "MailDesk" -srcfolder "$stage" -ov -format UDZO "$output/${base}.dmg"
+          (
+            cd "$output"
+            shasum -a 256 "${base}.zip" "${base}.dmg" >"SHA256SUMS-${{ matrix.asset_arch }}.txt"
+          )
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.asset_arch }}
+          path: artifacts/macos/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-prerelease:
+    name: publish-macos-prerelease
+    needs: build-macos
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-*
+          path: release-assets
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          checksum_temp="$(mktemp)"
+          find release-assets -type f -name 'SHA256SUMS-*.txt' -print0 | xargs -0 cat | sort > "$checksum_temp"
+          find release-assets -type f -name 'SHA256SUMS-*.txt' -delete
+          mv "$checksum_temp" release-assets/SHA256SUMS-macos.txt
+          find release-assets -maxdepth 3 -type f -print
+      - name: Create or update prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="$DISPATCH_TAG"
+          fi
+          mapfile -t assets < <(find release-assets -type f \( -name '*.zip' -o -name '*.dmg' -o -name 'SHA256SUMS-macos.txt' \) | sort)
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber
+            gh release edit "$tag" --prerelease --title "MailDesk macOS Preview · $tag" --notes-file docs/MACOS_RELEASE_NOTES.md
+          else
+            gh release create "$tag" "${assets[@]}" --target "$GITHUB_SHA" --prerelease --title "MailDesk macOS Preview · $tag" --notes-file docs/MACOS_RELEASE_NOTES.md
+          fi

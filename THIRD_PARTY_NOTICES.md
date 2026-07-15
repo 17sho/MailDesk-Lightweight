@@ -1,6 +1,6 @@
-# MailDesk v0.2.0 第三方组件声明
+# MailDesk v0.3.1 第三方组件声明
 
-MailDesk 自有代码使用 MIT License。Windows 可执行程序由 PyInstaller 构建，并会随包携带 Python 运行时、Qt/PySide6 组件以及下列 Python 依赖。第三方组件仍分别适用其原始许可证，本项目的 MIT License 不会取代这些条款。
+MailDesk 自有代码使用 MIT License。Windows 与 macOS 可执行程序由 PyInstaller 构建，并会随包携带 Python 运行时、Qt/PySide6 组件以及下列 Python 依赖。第三方组件仍分别适用其原始许可证，本项目的 MIT License 不会取代这些条款。
 
 ## 主要运行时组件
 
@@ -18,6 +18,7 @@ MailDesk 自有代码使用 MIT License。Windows 可执行程序由 PyInstaller
 | PySocks | 1.7.1 | BSD |
 | socksio | 1.0.0 | MIT |
 | pywin32 | 312 | PSF 及所含组件各自许可证 |
+| keyring | 25.x | MIT |
 | anyio | 4.12.1 | MIT |
 | sniffio | 1.3.1 | MIT OR Apache-2.0 |
 | h11 | 0.16.0 | MIT |

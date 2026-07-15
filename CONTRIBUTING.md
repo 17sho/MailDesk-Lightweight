@@ -11,7 +11,7 @@
 
 ## 本地开发
 
-项目面向 Windows 10/11，使用 Python 3.12：
+项目支持 Windows 10/11，并提供 macOS 13+ 预览版，统一使用 Python 3.12。Windows 本地开发：
 
 ```powershell
 git clone https://github.com/17sho/MailDesk.git
@@ -30,13 +30,21 @@ py -3.12 -m ruff check src tests build.py release.py
 py -3.12 -m pytest -q
 ```
 
+macOS 使用 `.venv/bin/python`，构建原生应用时运行：
+
+```bash
+.venv/bin/python -m ruff check src tests build.py build_macos.py release.py
+.venv/bin/python -m pytest -q
+.venv/bin/python build_macos.py --clean
+```
+
 测试必须使用临时数据库和 fake/mock 网络客户端，不应连接真实邮箱或外部 Webhook。
 
 ## 提交 Issue
 
 请先搜索现有 Issue。缺陷报告应包含：
 
-- Windows、Python 与 MailDesk 版本；
+- 操作系统及芯片架构、Python 与 MailDesk 版本；
 - 可复现的最小步骤；
 - 预期行为与实际行为；
 - 已脱敏的日志或截图；

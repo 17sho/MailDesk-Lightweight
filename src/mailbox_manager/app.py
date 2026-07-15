@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import re
 import sys
 from pathlib import Path
@@ -96,6 +97,11 @@ def create_main_window(paths: AppPaths | None = None) -> MainWindow:
 
 
 def configure_ui_font(application: QApplication) -> None:
+    if platform.system() == "Darwin":
+        application.setFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+        )
+        return
     windows_fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
     for filename in ("msyh.ttc", "msyhbd.ttc"):
         font_path = windows_fonts / filename

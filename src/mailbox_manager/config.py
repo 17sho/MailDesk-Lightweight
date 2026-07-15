@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,14 +21,28 @@ class AppPaths:
         return self.root / "updates"
 
     @classmethod
-    def for_current_user(cls) -> AppPaths:
-        local_app_data = os.environ.get("LOCALAPPDATA")
-        base = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
-        root = base / "MailDesk"
+    def for_current_user(
+        cls, *, system: str | None = None, home: Path | None = None
+    ) -> AppPaths:
+        system = system or platform.system()
+        home = Path.home() if home is None else Path(home)
+        explicit_root = os.environ.get("MAILDESK_DATA_DIR")
+        if explicit_root:
+            root = Path(explicit_root).expanduser()
+        elif system == "Windows":
+            local_app_data = os.environ.get("LOCALAPPDATA")
+            base = Path(local_app_data) if local_app_data else home / "AppData" / "Local"
+            root = base / "MailDesk"
+        elif system == "Darwin":
+            root = home / "Library" / "Application Support" / "MailDesk"
+        else:
+            data_home = os.environ.get("XDG_DATA_HOME")
+            root = (Path(data_home) if data_home else home / ".local" / "share") / "MailDesk"
+        key_name = "master.key.dpapi" if system == "Windows" else "master.key.keychain"
         return cls(
             root=root,
             database=root / "maildesk.db",
-            key_file=root / "master.key.dpapi",
+            key_file=root / key_name,
             logs=root / "logs",
             eml=root / "eml",
         )

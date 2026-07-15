@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "maildesk"
 version = "0.3.1"
-description = "Windows desktop mailbox manager"
+description = "Windows and macOS desktop mailbox manager"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
@@ -16,6 +16,7 @@ classifiers = [
   "Intended Audience :: End Users/Desktop",
   "Operating System :: Microsoft :: Windows :: Windows 10",
   "Operating System :: Microsoft :: Windows :: Windows 11",
+  "Operating System :: MacOS :: MacOS X",
   "Programming Language :: Python :: 3.12",
   "Topic :: Communications :: Email",
 ]
@@ -27,6 +28,7 @@ dependencies = [
   "PySocks>=1.7,<2",
   "socksio>=1.0,<2",
   "pywin32>=306; platform_system == 'Windows'",
+  "keyring>=25,<26; platform_system == 'Darwin'",
 ]
 
 [project.scripts]

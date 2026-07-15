@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from build import ensure_icon, validate_mode
+from build_macos import macos_asset_basename, normalize_macos_arch
 
 
 def test_ensure_icon_renders_windows_ico_from_svg(tmp_path) -> None:
@@ -22,6 +25,25 @@ def test_ensure_icon_renders_windows_ico_from_svg(tmp_path) -> None:
 def test_validate_mode_accepts_only_supported_pyinstaller_modes() -> None:
     assert validate_mode("onefile") == "onefile"
     assert validate_mode("onedir") == "onedir"
+
+
+def test_macos_release_names_normalize_native_architectures() -> None:
+    assert normalize_macos_arch("arm64") == "arm64"
+    assert normalize_macos_arch("x86_64") == "x64"
+    assert macos_asset_basename("0.3.1", "arm64") == "MailDesk-v0.3.1-macos-arm64"
+    assert macos_asset_basename("0.3.1", "x86_64") == "MailDesk-v0.3.1-macos-x64"
+    with pytest.raises(ValueError, match="不支持"):
+        normalize_macos_arch("ppc64")
+
+
+def test_macos_spec_builds_an_app_bundle_with_keychain_backend() -> None:
+    root = Path(__file__).resolve().parents[2]
+    spec = (root / "mailbox-manager-macos.spec").read_text(encoding="utf-8")
+
+    assert "application = BUNDLE(" in spec
+    assert 'bundle_identifier="com.maildesk.app"' in spec
+    assert '"keyring.backends.macOS"' in spec
+    assert '"LSMinimumSystemVersion": "13.0"' in spec
 
 
 def test_pyinstaller_spec_embeds_release_version_resource() -> None:

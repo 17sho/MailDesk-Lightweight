@@ -1,6 +1,6 @@
 # 历史兼容规格：多邮箱批量管理系统 v0.1
 
-> 本文保留 v0.1 核心契约，作为历史兼容基线，不代表当前功能完成度。v0.2 当前状态、安全替代和明确排除项见 `README.md` 与 `ENTERPRISE_FEATURES.md`。
+> 本文保留 v0.1 核心契约，作为历史兼容基线，不代表当前功能完成度。当前 Windows/macOS 支持状态、安全替代和明确排除项见 `README.md`、`docs/MACOS.md` 与 `ENTERPRISE_FEATURES.md`。
 
 ## 1. Objective
 
@@ -62,7 +62,7 @@
 - PySide6 6.7+
 - 标准库：`sqlite3`、`imaplib`、`email`、`ssl`、`csv`、`json`、`logging`
 - HTTP：`httpx`
-- 加密：`cryptography` + Windows DPAPI（`pywin32`）
+- 加密：`cryptography` + Windows DPAPI（`pywin32`）/ macOS 钥匙串（`keyring`）
 - Microsoft OAuth：标准 OAuth token endpoint（通过 `httpx`）；保留 MSAL 适配器接口
 - 2FA 扩展：`pyotp`
 - 测试：`pytest`、`pytest-qt`
@@ -147,10 +147,11 @@ MailDesk/
    └─ integration/
 ```
 
-运行时数据默认位于 `%LOCALAPPDATA%\MailDesk`，不写入源码目录：
+Windows 运行时数据默认位于 `%LOCALAPPDATA%\MailDesk`，macOS 位于 `~/Library/Application Support/MailDesk`，均不写入源码目录：
 
 - `maildesk.db`：SQLite 数据库，秘密字段为密文。
 - `master.key.dpapi`：仅当前 Windows 用户可解密的随机主密钥。
+- `master.key.keychain`：macOS 钥匙串主密钥的非秘密标记文件。
 - `logs/app.log`：滚动且脱敏的审计/错误日志。
 - `eml/`：用户显式保存的邮件原件。
 

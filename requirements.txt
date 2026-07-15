@@ -5,3 +5,4 @@ pyotp>=2.9,<3
 PySocks>=1.7,<2
 socksio>=1.0,<2
 pywin32>=306; platform_system == "Windows"
+keyring>=25,<26; platform_system == "Darwin"

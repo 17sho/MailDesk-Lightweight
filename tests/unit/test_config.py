@@ -11,13 +11,20 @@ from mailbox_manager.config import AppPaths
 def test_app_paths_keep_runtime_data_outside_source_tree(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
 
-    paths = AppPaths.for_current_user()
+    paths = AppPaths.for_current_user(system="Windows", home=tmp_path)
 
     assert paths.root == tmp_path / "MailDesk"
     assert paths.database.parent == paths.root
     assert paths.key_file.name.endswith(".dpapi")
     assert paths.logs.parent == paths.root
     assert paths.updates == paths.root / "updates"
+
+
+def test_macos_paths_use_application_support_and_keychain_marker(tmp_path) -> None:
+    paths = AppPaths.for_current_user(system="Darwin", home=tmp_path)
+
+    assert paths.root == tmp_path / "Library" / "Application Support" / "MailDesk"
+    assert paths.key_file.name == "master.key.keychain"
 
 
 def test_update_health_marker_is_restricted_to_update_staging(

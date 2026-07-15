@@ -347,7 +347,7 @@ class MainWindow(QMainWindow):
         self.security_status = QLabel("● 本地凭据已加密")
         self.security_status.setObjectName("statusPill")
         self.security_status.setProperty("state", "secure")
-        self.security_status.setToolTip("敏感字段由 Windows DPAPI 与 Fernet 加密保护")
+        self.security_status.setToolTip("敏感字段由系统安全存储与 Fernet 加密保护")
         self.statusBar().addPermanentWidget(self.security_status)
         self._set_fetch_ui_state("idle")
         self._apply_responsive_layout(self.width())
@@ -649,7 +649,7 @@ class MainWindow(QMainWindow):
                 {
                     "running": "取件任务正在运行",
                     "warning": "已请求停止，正在等待网络请求安全结束",
-                    "secure": "敏感字段由 Windows DPAPI 与 Fernet 加密保护",
+                    "secure": "敏感字段由系统安全存储与 Fernet 加密保护",
                 }[status_state]
             )
             self.security_status.style().unpolish(self.security_status)
