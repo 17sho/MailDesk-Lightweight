@@ -44,5 +44,7 @@ jobs:
             cp "artifact-${arch}/MailDesk-${RELEASE_TAG}-macos-${arch}.zip" macos-assets/
             cp "artifact-${arch}/MailDesk-${RELEASE_TAG}-macos-${arch}.dmg" macos-assets/
           done
-          gh release upload "$RELEASE_TAG" macos-assets/* --clobber
-          gh release view "$RELEASE_TAG" --json assets --jq '.assets[] | [.name, .size] | @tsv'
+          gh release upload "$RELEASE_TAG" macos-assets/* \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[] | [.name, .size] | @tsv'
