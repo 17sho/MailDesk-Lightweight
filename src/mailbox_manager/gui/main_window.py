@@ -3657,14 +3657,24 @@ class MainWindow(QMainWindow):
             self,
             webhook_options=webhook_options,
         )
+        update_check_requested = False
+
+        def request_update_check() -> None:
+            nonlocal update_check_requested
+            update_check_requested = True
+            # The settings dialog is modal.  Starting the asynchronous check while
+            # it is still executing leaves the result dialog blocked behind it,
+            # which looks as though the button did nothing.  Finish this dialog
+            # first, persist its current values below, and start the check once the
+            # modal event loop has returned.
+            dialog.accept()
+
         if hasattr(dialog, "addProxyRequested"):
             dialog.addProxyRequested.connect(
                 lambda: self._show_add_proxy_dialog(dialog)
             )
         if hasattr(dialog, "updateCheckRequested"):
-            dialog.updateCheckRequested.connect(
-                lambda: self.check_for_updates(manual=True)
-            )
+            dialog.updateCheckRequested.connect(request_update_check)
         if dialog.exec() != EnterpriseSettingsDialog.DialogCode.Accepted:
             return
         values = dialog.values()
@@ -3728,6 +3738,9 @@ class MainWindow(QMainWindow):
             self.page_toast.show_message("系统设置已保存并应用")
         except Exception as exc:
             QMessageBox.warning(self, "设置保存失败", str(exc))
+        finally:
+            if update_check_requested:
+                QTimer.singleShot(0, lambda: self.check_for_updates(manual=True))
 
     def _show_add_proxy_dialog(self, parent: QWidget | None = None) -> None:
         if self._proxies is None:

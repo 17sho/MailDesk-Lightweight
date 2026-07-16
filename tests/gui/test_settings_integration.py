@@ -102,6 +102,55 @@ def test_existing_webhook_selection_is_written_to_new_rule(qtbot, tmp_path) -> N
     assert stored_rules[0].webhook_id == selected_id
 
 
+def test_update_check_from_settings_waits_until_modal_dialog_closes(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    window, _webhooks, _rules = _window_with_automation_repositories(tmp_path)
+    qtbot.addWidget(window)
+    original_dialog = EnterpriseSettingsDialog
+    check_calls: list[tuple[bool, bool]] = []
+    state = {"inside_exec": False}
+
+    class AutoUpdateSettingsDialog:
+        DialogCode = QDialog.DialogCode
+
+        def __init__(self, values, parent=None, *, webhook_options=None) -> None:
+            self._dialog = original_dialog(
+                values,
+                parent,
+                webhook_options=webhook_options,
+            )
+            self.addProxyRequested = self._dialog.addProxyRequested
+            self.updateCheckRequested = self._dialog.updateCheckRequested
+            self._accepted = False
+
+        def accept(self) -> None:
+            self._accepted = True
+
+        def exec(self):
+            state["inside_exec"] = True
+            self.updateCheckRequested.emit()
+            assert check_calls == []
+            state["inside_exec"] = False
+            return self.DialogCode.Accepted if self._accepted else self.DialogCode.Rejected
+
+        def values(self):
+            return self._dialog.values()
+
+    monkeypatch.setattr(
+        "mailbox_manager.gui.main_window.EnterpriseSettingsDialog",
+        AutoUpdateSettingsDialog,
+    )
+    monkeypatch.setattr(
+        window,
+        "check_for_updates",
+        lambda *, manual=True: check_calls.append((manual, state["inside_exec"])),
+    )
+
+    window.show_settings()
+    qtbot.waitUntil(lambda: check_calls == [(True, False)])
+
+
 def test_show_settings_keeps_one_shot_credentials_out_of_plain_settings(
     qtbot, tmp_path, monkeypatch
 ) -> None:
