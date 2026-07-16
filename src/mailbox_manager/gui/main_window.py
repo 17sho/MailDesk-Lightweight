@@ -1060,11 +1060,6 @@ class MainWindow(QMainWindow):
         tabs.setDocumentMode(True)
         body_tab = QWidget()
         body_tab.setObjectName("messageBodyTab")
-        # QWebEngineView needs a native host.  Creating that host only when this
-        # hidden tab is first shown makes Qt rebuild the top-level Windows HWND,
-        # which looks like the application closed and reopened.  Realize the
-        # stable host with the rest of the main-window hierarchy instead.
-        body_tab.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         body_layout = QVBoxLayout(body_tab)
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
@@ -1161,11 +1156,6 @@ class MainWindow(QMainWindow):
         return panel, log_section
 
     def _create_log_dock(self, content: QWidget) -> None:
-        # QMainWindow's geometry animation repeatedly resizes the native
-        # QtWebEngine surface and can expose black backing-store frames.
-        self.setDockOptions(
-            self.dockOptions() & ~QMainWindow.DockOption.AnimatedDocks
-        )
         self.log_dock = QDockWidget("运行日志", self)
         self.log_dock.setObjectName("logDock")
         self.log_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)

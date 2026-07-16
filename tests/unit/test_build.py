@@ -27,14 +27,17 @@ def test_validate_mode_accepts_only_supported_pyinstaller_modes() -> None:
     assert validate_mode("onedir") == "onedir"
 
 
-def test_windows_build_excludes_unused_qml_payload_and_keeps_webengine() -> None:
+def test_windows_build_excludes_chromium_and_keeps_lightweight_qt_widgets() -> None:
     assert not should_include_qt_payload(
         "PySide6/qml/QtQuick/Controls/FluentWinUI3/dark/images/very-long-name.png"
     )
-    assert should_include_qt_payload("PySide6/QtWebEngineWidgets.pyd")
-    assert should_include_qt_payload("PySide6/resources/qtwebengine_resources.pak")
-    assert should_include_qt_payload("PySide6/Qt6WebEngineCore.dll")
-    assert should_include_qt_payload("PySide6/Qt6Quick.dll")
+    assert not should_include_qt_payload("PySide6/QtWebEngineWidgets.pyd")
+    assert not should_include_qt_payload("PySide6/resources/qtwebengine_resources.pak")
+    assert not should_include_qt_payload("PySide6/Qt6WebEngineCore.dll")
+    assert not should_include_qt_payload("PySide6/Qt6Quick.dll")
+    assert not should_include_qt_payload("PySide6/QtNetwork.pyd")
+    assert should_include_qt_payload("PySide6/QtWidgets.pyd")
+    assert should_include_qt_payload("PySide6/Qt6Widgets.dll")
     assert not should_include_qt_payload("PySide6/QtCharts.pyd")
     assert not should_include_qt_payload("PySide6/Qt6Charts.dll")
     assert not should_include_qt_payload("PySide6/Qt6OpenGLWidgets.dll")

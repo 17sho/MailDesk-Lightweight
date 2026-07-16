@@ -30,28 +30,12 @@ _ICON_SPECS = (
     ("icon_512x512@2x.png", 1024),
 )
 
-_QTWEBENGINE_FRAMEWORK_PREFIX = (
-    "PySide6/Qt/lib/QtWebEngineCore.framework/Versions/Resources/"
-)
 _MACOS_QT_FRAMEWORKS = frozenset(
     {
         "qtcore",
         "qtdbus",
         "qtgui",
-        "qtnetwork",
-        "qtopengl",
-        "qtpositioning",
-        "qtprintsupport",
-        "qtqml",
-        "qtqmlmeta",
-        "qtqmlmodels",
-        "qtqmlworkerscript",
-        "qtquick",
-        "qtquickwidgets",
         "qtsvg",
-        "qtwebchannel",
-        "qtwebenginecore",
-        "qtwebenginewidgets",
         "qtwidgets",
     }
 )
@@ -59,12 +43,7 @@ _MACOS_QT_BINDINGS = frozenset(
     {
         "qtcore",
         "qtgui",
-        "qtnetwork",
-        "qtprintsupport",
         "qtsvg",
-        "qtwebchannel",
-        "qtwebenginecore",
-        "qtwebenginewidgets",
         "qtwidgets",
     }
 )
@@ -85,33 +64,6 @@ def should_include_macos_qt_payload(destination: str) -> bool:
         module = filename.split(".", 1)[0]
         return module in _MACOS_QT_BINDINGS
     return True
-
-
-def repair_qtwebengine_framework_destination(destination: str) -> str:
-    """Place collected WebEngine payloads behind the framework's live symlinks.
-
-    PyInstaller 6.x combined with the PySide6 6.11 macOS wheel can flatten the
-    framework's ``Resources`` source symlink into ``Versions/Resources``.  The
-    shipped framework still points ``Resources`` and ``Helpers`` at
-    ``Versions/A``, so that layout makes QWebEngineProfile abort at runtime.
-    """
-
-    normalized = destination.replace("\\", "/")
-    prefix_index = normalized.casefold().find(
-        _QTWEBENGINE_FRAMEWORK_PREFIX.casefold()
-    )
-    if prefix_index < 0:
-        return normalized
-    relative_start = prefix_index + len(_QTWEBENGINE_FRAMEWORK_PREFIX)
-    relative = normalized[relative_start:]
-    bucket, separator, remainder = relative.partition("/")
-    if bucket.casefold() not in {"helpers", "resources"}:
-        return normalized
-    fixed_prefix = (
-        normalized[:prefix_index]
-        + "PySide6/Qt/lib/QtWebEngineCore.framework/Versions/A/"
-    )
-    return fixed_prefix + bucket + (separator + remainder if separator else "")
 
 
 def normalize_macos_arch(machine: str) -> str:

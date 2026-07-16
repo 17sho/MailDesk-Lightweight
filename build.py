@@ -14,19 +14,11 @@ ROOT = Path(__file__).resolve().parent
 SVG_ICON = ROOT / "src" / "mailbox_manager" / "assets" / "app.svg"
 ICO_ICON = ROOT / "assets" / "app.ico"
 SPEC_FILE = ROOT / "mailbox-manager.spec"
-WEBENGINE_LOCALES = frozenset(
-    {"en-us.pak", "zh-cn.pak"}
-)
 WINDOWS_QT_PYTHON_BINDINGS = frozenset(
     {
         "qtcore.pyd",
         "qtgui.pyd",
-        "qtnetwork.pyd",
-        "qtprintsupport.pyd",
         "qtsvg.pyd",
-        "qtwebchannel.pyd",
-        "qtwebenginecore.pyd",
-        "qtwebenginewidgets.pyd",
         "qtwidgets.pyd",
     }
 )
@@ -34,34 +26,18 @@ WINDOWS_QT_RUNTIME_DLLS = frozenset(
     {
         "qt6core.dll",
         "qt6gui.dll",
-        "qt6network.dll",
-        "qt6opengl.dll",
-        "qt6positioning.dll",
-        "qt6printsupport.dll",
-        "qt6qml.dll",
-        "qt6qmlmeta.dll",
-        "qt6qmlmodels.dll",
-        "qt6qmlworkerscript.dll",
-        "qt6quick.dll",
-        "qt6quickwidgets.dll",
         "qt6svg.dll",
-        "qt6webchannel.dll",
-        "qt6webenginecore.dll",
-        "qt6webenginewidgets.dll",
         "qt6widgets.dll",
     }
 )
 WINDOWS_QT_PLUGIN_DLLS = frozenset(
     {
-        "qcertonlybackend.dll",
         "qgif.dll",
         "qicns.dll",
         "qico.dll",
         "qjpeg.dll",
         "qmodernwindowsstyle.dll",
-        "qnetworklistmanager.dll",
         "qpdf.dll",
-        "qschannelbackend.dll",
         "qsvg.dll",
         "qsvgicon.dll",
         "qtga.dll",
@@ -74,27 +50,20 @@ WINDOWS_QT_PLUGIN_DLLS = frozenset(
 
 
 def should_include_qt_payload(destination: str) -> bool:
-    """Drop QtWebEngine development/debug payloads that the reader never uses."""
+    """Keep only Qt Widgets/SVG payloads used by the lightweight desktop UI."""
 
     normalized = destination.replace("\\", "/").casefold()
     filename = normalized.rsplit("/", 1)[-1]
-    # MailDesk uses Qt Widgets and QtWebEngineWidgets. WebEngine itself links
-    # against the QML/Quick DLLs, but it does not need the large QML component
-    # source hierarchy. Keeping that distinction avoids both startup crashes
-    # and Windows MAX_PATH failures in verified updater staging directories.
     if "pyside6/qml/" in normalized:
         return False
     if "pyside6/plugins/qmltooling/" in normalized:
         return False
     if "pyside6/plugins/platforminputcontexts/qtvirtualkeyboard" in normalized:
         return False
-    if "pyside6/resources/" in normalized and (
-        ".debug." in filename
-        or filename.startswith("qtwebengine_devtools_resources")
-    ):
+    if "pyside6/resources/" in normalized:
         return False
     if "pyside6/translations/qtwebengine_locales/" in normalized:
-        return filename in WEBENGINE_LOCALES
+        return False
     if "pyside6/translations/" in normalized and filename.endswith(".qm"):
         return filename.endswith("_zh_cn.qm")
     if "pyside6/plugins/" in normalized and filename.endswith(".dll"):
@@ -109,8 +78,6 @@ def should_include_qt_payload(destination: str) -> bool:
             and filename.endswith(".dll")
         ):
             return filename in WINDOWS_QT_RUNTIME_DLLS
-        if relative == "pyside6qml.abi3.dll":
-            return False
     return True
 
 

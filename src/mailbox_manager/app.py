@@ -227,7 +227,7 @@ def schedule_startup_probe(
     probe = os.environ.pop("MAILDESK_STARTUP_PROBE", "").strip().casefold()
     if not probe:
         return False
-    if probe != "webengine":
+    if probe not in {"reader", "webengine"}:
         logger.warning("Unknown MailDesk startup probe: %s", probe)
         return False
 
@@ -237,8 +237,10 @@ def schedule_startup_probe(
         with httpx.Client():
             __import__("socks")
             __import__("socksio")
-        window.message_body.setPlainText("MailDesk packaged WebEngine probe")
-        logger.info("MailDesk WebEngine startup probe passed")
+        window.message_body.setHtml(
+            "<table><tr><td><b>MailDesk lightweight reader probe</b></td></tr></table>"
+        )
+        logger.info("MailDesk lightweight reader startup probe passed")
         QTimer.singleShot(250, window.request_quit)
 
     QTimer.singleShot(0, run_probe)

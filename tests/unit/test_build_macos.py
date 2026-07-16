@@ -3,7 +3,6 @@ from __future__ import annotations
 from build_macos import (
     macos_asset_basename,
     normalize_macos_arch,
-    repair_qtwebengine_framework_destination,
     should_include_macos_qt_payload,
 )
 
@@ -20,46 +19,18 @@ def test_names_native_macos_release_assets() -> None:
     assert macos_asset_basename("1.2.3", "arm64") == "MailDesk-v1.2.3-macos-arm64"
 
 
-def test_repairs_flattened_qtwebengine_framework_resources() -> None:
-    broken = (
-        "PySide6/Qt/lib/QtWebEngineCore.framework/Versions/Resources/"
-        "Resources/icudtl.dat"
-    )
-
-    assert repair_qtwebengine_framework_destination(broken) == (
-        "PySide6/Qt/lib/QtWebEngineCore.framework/Versions/A/Resources/icudtl.dat"
-    )
-
-
-def test_repairs_flattened_qtwebengine_framework_helper() -> None:
-    broken = (
-        "PySide6/Qt/lib/QtWebEngineCore.framework/Versions/Resources/Helpers/"
-        "QtWebEngineProcess.app/Contents/MacOS/QtWebEngineProcess"
-    )
-
-    assert repair_qtwebengine_framework_destination(broken) == (
-        "PySide6/Qt/lib/QtWebEngineCore.framework/Versions/A/Helpers/"
-        "QtWebEngineProcess.app/Contents/MacOS/QtWebEngineProcess"
-    )
-
-
-def test_leaves_other_framework_destinations_unchanged() -> None:
-    destination = "PySide6/Qt/lib/QtCore.framework/Versions/A/QtCore"
-
-    assert repair_qtwebengine_framework_destination(destination) == destination
-
-
-def test_macos_payload_filter_keeps_reader_frameworks_and_drops_large_extras() -> None:
-    assert should_include_macos_qt_payload(
+def test_macos_payload_filter_drops_chromium_and_keeps_qt_widgets() -> None:
+    assert not should_include_macos_qt_payload(
         "PySide6/Qt/lib/QtWebEngineCore.framework/Versions/A/QtWebEngineCore"
     )
-    assert should_include_macos_qt_payload(
+    assert not should_include_macos_qt_payload(
         "PySide6/Qt/lib/QtQuick.framework/Versions/A/QtQuick"
     )
     assert should_include_macos_qt_payload(
         "PySide6/Qt/lib/QtDBus.framework/Versions/A/QtDBus"
     )
-    assert should_include_macos_qt_payload("PySide6/QtWebEngineWidgets.abi3.so")
+    assert not should_include_macos_qt_payload("PySide6/QtWebEngineWidgets.abi3.so")
+    assert should_include_macos_qt_payload("PySide6/QtWidgets.abi3.so")
     assert not should_include_macos_qt_payload(
         "PySide6/Qt/lib/QtCharts.framework/Versions/A/QtCharts"
     )

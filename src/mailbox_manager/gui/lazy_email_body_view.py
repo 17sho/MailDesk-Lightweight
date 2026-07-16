@@ -17,7 +17,7 @@ class _DocumentSnapshot:
 
 
 class LazyEmailBodyView(QWidget):
-    """Delay QtWebEngine startup until an email body actually needs rendering."""
+    """Create the lightweight rich-text reader only when a body is selected."""
 
     anchorClicked = Signal(QUrl)
     feedbackRequested = Signal(str)
@@ -43,10 +43,6 @@ class LazyEmailBodyView(QWidget):
     @property
     def is_initialized(self) -> bool:
         return self._body_view is not None
-
-    @property
-    def blocked_request_count(self) -> int:
-        return self._body_view.blocked_request_count if self._body_view is not None else 0
 
     def setHtml(self, html: str) -> None:
         self._mode = "html"
@@ -109,11 +105,10 @@ class LazyEmailBodyView(QWidget):
                 self._body_view.setPlainText(self._plain_text)
             return
 
-        # Importing and constructing QtWebEngine is the dominant startup cost.
         from mailbox_manager.gui.email_body_view import EmailBodyView
 
         body_view = EmailBodyView(self)
-        body_view.setObjectName("emailBodyWebView")
+        body_view.setObjectName("emailBodyTextView")
         body_view.setPlaceholderText(self._placeholder)
         body_view.anchorClicked.connect(self.anchorClicked)
         body_view.feedbackRequested.connect(self.feedbackRequested)

@@ -807,7 +807,7 @@ def test_log_drawer_is_hidden_by_default_and_can_be_toggled(qtbot, tmp_path) -> 
     window.show()
 
     assert window.log_dock.isVisible() is False
-    assert not (window.dockOptions() & window.DockOption.AnimatedDocks)
+    assert window.dockOptions() & window.DockOption.AnimatedDocks
     window.log_action.trigger()
     assert window.log_dock.isVisible() is True
     assert window.log_action.text() == "收起运行日志"
@@ -820,7 +820,7 @@ def test_log_drawer_is_hidden_by_default_and_can_be_toggled(qtbot, tmp_path) -> 
     qtbot.waitUntil(lambda: window.log_dock.isVisible() is False)
 
 
-def test_main_message_body_initializes_webengine_only_when_used(qtbot, tmp_path) -> None:
+def test_main_message_body_initializes_lightweight_reader_only_when_used(qtbot, tmp_path) -> None:
     database = Database(tmp_path / "lazy-message-body.db")
     database.initialize()
     accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"Y" * 32))

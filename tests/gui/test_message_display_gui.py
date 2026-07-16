@@ -4,8 +4,6 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
-
 from mailbox_manager.domain.models import EmailAccount, MailMessage, ProtocolType
 from mailbox_manager.gui.mail_viewer_dialog import MailViewerDialog
 from mailbox_manager.gui.main_window import MainWindow
@@ -50,10 +48,6 @@ def test_main_message_detail_falls_back_when_sanitized_html_is_empty(
     )
     window = MainWindow(accounts, messages)
     qtbot.addWidget(window)
-
-    assert window.message_body.parentWidget().testAttribute(
-        Qt.WidgetAttribute.WA_NativeWindow
-    ) is True
 
     window._account_row_clicked(window.account_model.index(0, 1))
 

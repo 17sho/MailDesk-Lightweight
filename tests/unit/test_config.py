@@ -286,11 +286,11 @@ def test_instance_lock_allows_only_one_process_per_data_directory(tmp_path) -> N
     replacement.unlock()
 
 
-def test_webengine_startup_probe_exercises_reader_and_quits(monkeypatch) -> None:
+def test_lightweight_startup_probe_exercises_reader_and_quits(monkeypatch) -> None:
     callbacks: list[tuple[int, object]] = []
     window = Mock()
     logger = Mock()
-    monkeypatch.setenv("MAILDESK_STARTUP_PROBE", "webengine")
+    monkeypatch.setenv("MAILDESK_STARTUP_PROBE", "reader")
     monkeypatch.setattr(
         "mailbox_manager.app.QTimer.singleShot",
         lambda delay, callback: callbacks.append((delay, callback)),
@@ -302,9 +302,11 @@ def test_webengine_startup_probe_exercises_reader_and_quits(monkeypatch) -> None
 
     callbacks[0][1]()  # type: ignore[operator]
 
-    window.message_body.setPlainText.assert_called_once_with(
-        "MailDesk packaged WebEngine probe"
+    window.message_body.setHtml.assert_called_once_with(
+        "<table><tr><td><b>MailDesk lightweight reader probe</b></td></tr></table>"
     )
-    logger.info.assert_called_once_with("MailDesk WebEngine startup probe passed")
+    logger.info.assert_called_once_with(
+        "MailDesk lightweight reader startup probe passed"
+    )
     assert callbacks[1][0] == 250
     assert callbacks[1][1] == window.request_quit
