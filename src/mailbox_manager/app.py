@@ -183,21 +183,39 @@ def migrate_legacy_data_for_startup(
 ) -> bool:
     """Move legacy profile data only while no older MailDesk process owns it."""
 
+    # MAILDESK_DATA_DIR is an explicit isolation override used by startup
+    # probes and test/development runs.  Importing the real user profile into
+    # that disposable directory would both defeat isolation and risk moving
+    # user data during a smoke test.
+    if os.environ.get("MAILDESK_DATA_DIR"):
+        return False
     legacy_root = legacy_data_root(system=platform.system(), home=Path.home()).resolve()
     if legacy_root == paths.root.resolve() or not legacy_root.is_dir():
         return False
     legacy_lock = QLockFile(str(legacy_root / ".instance.lock"))
     if not legacy_lock.tryLock(100):
         raise RuntimeError("旧版 MailDesk 仍在运行，请先完全退出后再启动新版。")
+    migrated = False
+    cleanup_after_unlock = paths.database.exists()
     try:
-        if paths.database.exists():
-            return cleanup_deferred_legacy_data(paths)
-        return migrate_legacy_data(
-            paths,
-            defer_legacy_cleanup=defer_legacy_cleanup,
-        )
+        if not paths.database.exists():
+            # Always leave the source in place while its QLockFile is held.
+            # Windows cannot remove an open lock file, so cleanup must happen
+            # only after unlock below.
+            migrated = migrate_legacy_data(paths, defer_legacy_cleanup=True)
+            cleanup_after_unlock = migrated and not defer_legacy_cleanup
     finally:
         legacy_lock.unlock()
+    cleaned = False
+    if cleanup_after_unlock:
+        try:
+            cleaned = cleanup_deferred_legacy_data(paths)
+        except OSError:
+            # The portable copy is already integrity-checked.  Keep the marker
+            # and retry cleanup on the next launch instead of blocking startup
+            # because antivirus/indexing briefly retained a legacy file.
+            cleaned = False
+    return migrated or cleaned
 
 
 def schedule_startup_probe(

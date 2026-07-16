@@ -7,6 +7,7 @@ import pytest
 
 from mailbox_manager.app import (
     acquire_instance_lock,
+    migrate_legacy_data_for_startup,
     report_update_health,
     schedule_startup_probe,
 )
@@ -154,6 +155,61 @@ def test_defers_legacy_cleanup_until_old_updater_health_handoff_finishes(
         paths, system="Windows", home=tmp_path
     )
     assert not legacy.exists()
+
+
+def test_startup_migration_releases_legacy_lock_before_cleanup(
+    tmp_path, monkeypatch
+) -> None:
+    import sqlite3
+    from contextlib import closing
+
+    legacy_base = tmp_path / "legacy-local"
+    monkeypatch.setenv("LOCALAPPDATA", str(legacy_base))
+    monkeypatch.delenv("MAILDESK_DATA_DIR", raising=False)
+    monkeypatch.setattr("mailbox_manager.app.platform.system", lambda: "Windows")
+    legacy = legacy_base / "MailDesk"
+    legacy.mkdir(parents=True)
+    with closing(sqlite3.connect(legacy / "maildesk.db")) as connection:
+        connection.execute("CREATE TABLE sample(value TEXT)")
+        connection.commit()
+    portable = tmp_path / "portable" / "MailDesk Data"
+    paths = AppPaths(
+        root=portable,
+        database=portable / "maildesk.db",
+        key_file=portable / "master.key.dpapi",
+        logs=portable / "logs",
+        eml=portable / "eml",
+    )
+
+    assert migrate_legacy_data_for_startup(paths) is True
+
+    assert paths.database.is_file()
+    assert not legacy.exists()
+
+
+def test_explicit_data_root_never_imports_real_legacy_profile(
+    tmp_path, monkeypatch
+) -> None:
+    legacy_base = tmp_path / "legacy-local"
+    legacy = legacy_base / "MailDesk"
+    legacy.mkdir(parents=True)
+    (legacy / "maildesk.db").write_bytes(b"real-user-data")
+    isolated = tmp_path / "isolated"
+    paths = AppPaths(
+        root=isolated,
+        database=isolated / "maildesk.db",
+        key_file=isolated / "master.key.dpapi",
+        logs=isolated / "logs",
+        eml=isolated / "eml",
+    )
+    monkeypatch.setenv("LOCALAPPDATA", str(legacy_base))
+    monkeypatch.setenv("MAILDESK_DATA_DIR", str(isolated))
+    monkeypatch.setattr("mailbox_manager.app.platform.system", lambda: "Windows")
+
+    assert migrate_legacy_data_for_startup(paths) is False
+
+    assert (legacy / "maildesk.db").read_bytes() == b"real-user-data"
+    assert not isolated.exists()
 
 
 def test_update_health_accepts_one_legacy_updater_handoff(
