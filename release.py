@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 DEFAULT_OUTPUT = ROOT / "artifacts" / "releases"
-DEFAULT_REPOSITORY = "17sho/MailDesk"
+DEFAULT_REPOSITORY = "17sho/MailDesk-Lightweight"
 SIGNED_MANIFEST_ASSET_NAME = "MailDesk-update-manifest-v1.json"
 SIGNED_MANIFEST_SIGNATURE_NAME = "MailDesk-update-manifest-v1.sig"
 TRUSTED_UPDATE_PUBLIC_KEY_B64 = "/mMJmCQYNZ58XMog58hjXRNZWEHCQjT+nnuISeotU4c="

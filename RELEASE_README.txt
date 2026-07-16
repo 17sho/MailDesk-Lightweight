@@ -1,8 +1,8 @@
 MailDesk v0.4.2 · Windows x64
 ================================
 
-项目主页：https://github.com/17sho/MailDesk
-版本页面：https://github.com/17sho/MailDesk/releases/tag/v0.4.2
+项目主页：https://github.com/17sho/MailDesk-Lightweight
+版本页面：https://github.com/17sho/MailDesk-Lightweight/releases/tag/v0.4.2
 
 系统要求
 --------

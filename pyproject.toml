@@ -35,10 +35,10 @@ dependencies = [
 maildesk = "mailbox_manager.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/17sho/MailDesk"
-Documentation = "https://github.com/17sho/MailDesk#readme"
-Issues = "https://github.com/17sho/MailDesk/issues"
-Source = "https://github.com/17sho/MailDesk"
+Homepage = "https://github.com/17sho/MailDesk-Lightweight"
+Documentation = "https://github.com/17sho/MailDesk-Lightweight#readme"
+Issues = "https://github.com/17sho/MailDesk-Lightweight/issues"
+Source = "https://github.com/17sho/MailDesk-Lightweight"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

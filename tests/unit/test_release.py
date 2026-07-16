@@ -103,7 +103,7 @@ def test_signed_update_manifest_binds_both_archives_and_verifies(tmp_path: Path)
     private_key.public_key().verify(signature.read_bytes(), manifest.read_bytes())
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     assert payload["schema"] == 1
-    assert payload["repository"] == "17sho/MailDesk"
+    assert payload["repository"] == "17sho/MailDesk-Lightweight"
     assert payload["version"] == version
     assert payload["assets"][onefile.name] == {
         "sha256": release.sha256_file(onefile),

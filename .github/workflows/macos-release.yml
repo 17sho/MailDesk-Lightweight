@@ -162,7 +162,7 @@ jobs:
           version = sys.argv[2]
           machine = sys.argv[3]
           digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-          asset = ReleaseAsset(archive.name, "https://github.com/17sho/MailDesk", archive.stat().st_size)
+          asset = ReleaseAsset(archive.name, "https://github.com/17sho/MailDesk-Lightweight", archive.stat().st_size)
           release = ReleaseInfo(version, f"v{version}", f"MailDesk {version}", "", "", None, (asset,))
           update = UpdateInfo("0.0.0", release, InstallMode.MACOS_APP, asset, None, expected_sha256=digest, expected_size=asset.size)
           with tempfile.TemporaryDirectory(prefix="maildesk-updater-verify-") as temporary:

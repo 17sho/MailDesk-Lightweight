@@ -44,7 +44,7 @@ from mailbox_manager.services.update_service import (
     validate_trusted_github_url,
 )
 
-REPOSITORY = "17sho/MailDesk"
+REPOSITORY = "17sho/MailDesk-Lightweight"
 API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 _TEST_SIGNING_KEY = Ed25519PrivateKey.from_private_bytes(b"S" * 32)
 _TEST_PUBLIC_KEY = _TEST_SIGNING_KEY.public_key().public_bytes(

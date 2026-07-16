@@ -14,7 +14,7 @@
 项目支持 Windows 10/11，并提供 macOS 13+ 预览版，统一使用 Python 3.12。Windows 本地开发：
 
 ```powershell
-git clone https://github.com/17sho/MailDesk.git
+git clone https://github.com/17sho/MailDesk-Lightweight.git
 cd MailDesk
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip

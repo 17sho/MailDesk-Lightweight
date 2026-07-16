@@ -31,7 +31,7 @@ import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-DEFAULT_REPOSITORY = "17sho/MailDesk"
+DEFAULT_REPOSITORY = "17sho/MailDesk-Lightweight"
 GITHUB_API_ROOT = "https://api.github.com"
 CHECKSUM_ASSET_NAME = "SHA256SUMS.txt"
 SIGNED_MANIFEST_ASSET_NAME = "MailDesk-update-manifest-v1.json"
