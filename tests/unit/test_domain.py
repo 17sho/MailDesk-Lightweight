@@ -15,6 +15,7 @@ from mailbox_manager.protocols.base import EmailClientBase
 
 
 def test_fetch_request_supports_unlimited_and_rejects_negative_count() -> None:
+    assert FetchRequest().unlimited is True
     assert FetchRequest(max_messages=0).unlimited is True
     assert FetchRequest(max_messages=201).unlimited is False
 

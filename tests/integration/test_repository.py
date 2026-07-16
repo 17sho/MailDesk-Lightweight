@@ -160,7 +160,7 @@ def test_message_repository_migrates_and_refreshes_html_body(tmp_path) -> None:
         ).fetchone()
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert attachment_table == ("attachments",)
-    assert version == 8
+    assert version == 9
 
 
 def test_message_repository_persists_and_searches_sender_name(tmp_path) -> None:
@@ -201,6 +201,112 @@ def test_message_repository_persists_and_searches_sender_name(tmp_path) -> None:
     assert loaded.sender_name == "Security Team"
     assert loaded.sender_display == "Security Team <security@example.com>"
     assert [hit.message.provider_message_id for hit in hits] == ["named-sender"]
+
+
+def test_header_refresh_does_not_erase_an_already_loaded_body(tmp_path) -> None:
+    database = Database(tmp_path / "lazy-body.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"L" * 32))
+    accounts.add_many(
+        [
+            EmailAccount(
+                email="lazy@example.com",
+                provider="custom",
+                protocol=ProtocolType.IMAP,
+                host="imap.example.com",
+                port=993,
+                secret="secret",
+            )
+        ]
+    )
+    account_id = accounts.list_all()[0].account_id
+    assert account_id is not None
+    repository = MessageRepository(database)
+    repository.add_many(
+        account_id,
+        (
+            MailMessage(
+                provider_message_id="lazy-1",
+                transport_id="42",
+                folder="INBOX",
+                subject="完整邮件",
+                text_body="已经下载的正文",
+                html_body="<p>已经下载的正文</p>",
+                body_loaded=True,
+            ),
+        ),
+    )
+    repository.add_many(
+        account_id,
+        (
+            MailMessage(
+                provider_message_id="lazy-1",
+                transport_id="42",
+                folder="INBOX",
+                subject="更新后的标题",
+                body_loaded=False,
+            ),
+        ),
+    )
+
+    loaded = repository.list_for_account(account_id)[0]
+    assert loaded.subject == "更新后的标题"
+    assert loaded.text_body == "已经下载的正文"
+    assert loaded.html_body == "<p>已经下载的正文</p>"
+    assert loaded.body_loaded is True
+
+
+def test_header_becomes_loaded_after_lazy_body_is_persisted(tmp_path) -> None:
+    database = Database(tmp_path / "lazy-upgrade.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"U" * 32))
+    accounts.add_many(
+        [
+            EmailAccount(
+                email="upgrade@example.com",
+                provider="custom",
+                protocol=ProtocolType.IMAP,
+                host="imap.example.com",
+                port=993,
+                secret="secret",
+            )
+        ]
+    )
+    account_id = accounts.list_all()[0].account_id
+    assert account_id is not None
+    repository = MessageRepository(database)
+    repository.add_many(
+        account_id,
+        (
+            MailMessage(
+                provider_message_id="lazy-2",
+                transport_id="43",
+                folder="INBOX",
+                subject="仅邮件头",
+                body_loaded=False,
+            ),
+        ),
+    )
+    header = repository.list_for_account(account_id)[0]
+    assert header.body_loaded is False
+
+    repository.add_many(
+        account_id,
+        (
+            MailMessage(
+                provider_message_id="lazy-2",
+                transport_id="43",
+                folder="INBOX",
+                subject="仅邮件头",
+                text_body="点击后加载的正文",
+                body_loaded=True,
+            ),
+        ),
+    )
+
+    loaded = repository.list_for_account(account_id)[0]
+    assert loaded.body_loaded is True
+    assert loaded.text_body == "点击后加载的正文"
 
 
 def test_message_repository_persists_attachment_and_loads_binary_on_demand(tmp_path) -> None:

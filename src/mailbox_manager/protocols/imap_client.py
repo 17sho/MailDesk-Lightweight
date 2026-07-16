@@ -14,17 +14,22 @@ from mailbox_manager.domain.models import (
     FetchRequest,
     FetchResult,
     MailFolder,
+    MailMessage,
     PostAction,
     ProxyConfig,
 )
 from mailbox_manager.domain.status import AccountStatus
-from mailbox_manager.mail.parser import parse_email_message
+from mailbox_manager.mail.parser import extract_matches, parse_email_message
 from mailbox_manager.protocols.base import EmailClientBase
 from mailbox_manager.protocols.proxy_socket import create_proxy_socket
 
 ConnectionFactory = Callable[..., imaplib.IMAP4]
 IMAP_FETCH_BATCH_SIZE = 25
 IMAP_COMMAND_TIMEOUT = 90.0
+IMAP_HEADER_QUERY = (
+    "(UID BODY.PEEK[HEADER.FIELDS "
+    "(MESSAGE-ID SUBJECT FROM TO CC X-ORIGINAL-TO DELIVERED-TO DATE)])"
+)
 UID_RESPONSE_PATTERN = re.compile(rb"\bUID\s+(\d+)\b", re.IGNORECASE)
 logger = logging.getLogger("maildesk.imap")
 
@@ -174,9 +179,7 @@ class ImapClient(EmailClientBase):
             if remaining is not None and remaining <= 0:
                 break
             self._stage = "select_folder"
-            status, _ = connection.select(
-                folder, readonly=request.post_action is PostAction.NONE
-            )
+            status, _ = connection.select(folder, readonly=True)
             if status != "OK":
                 continue
             self._stage = "search"
@@ -199,27 +202,11 @@ class ImapClient(EmailClientBase):
             newest_first = list(reversed(identifiers))
             for offset in range(0, len(newest_first), IMAP_FETCH_BATCH_SIZE):
                 batch = newest_first[offset : offset + IMAP_FETCH_BATCH_SIZE]
-                self._stage = "download_messages"
-                for identifier, raw in _fetch_uid_messages(connection, batch):
-                    message = parse_email_message(
-                        raw,
-                        folder=folder,
-                        keywords=request.keywords,
-                        custom_pattern=request.custom_pattern,
-                    )
-                    message = replace(
-                        message,
-                        transport_id=_uid_text(identifier),
-                    )
-                    if not request.include_raw:
-                        message = replace(message, raw_eml=b"")
+                self._stage = "download_headers"
+                for identifier, raw in _fetch_uid_headers(connection, batch):
+                    message = _parse_header_message(raw, folder, request)
+                    message = replace(message, transport_id=_uid_text(identifier))
                     messages.append(message)
-                    if (
-                        message.matched_values
-                        and request.post_action is not PostAction.NONE
-                    ):
-                        self._stage = "post_action"
-                        _apply_post_action(connection, identifier, request)
                     if remaining is not None:
                         remaining -= 1
                         if remaining <= 0:
@@ -228,6 +215,54 @@ class ImapClient(EmailClientBase):
                     break
         self._stage = "ready"
         return FetchResult(AccountStatus.SUCCESS, tuple(messages), "收取完成")
+
+    def fetch_message(self, message: MailMessage, request: FetchRequest) -> MailMessage:
+        if not message.transport_id:
+            raise ValueError("邮件缺少服务器标识，无法加载正文")
+        attempts = 2 if request.post_action is PostAction.NONE else 1
+        for attempt in range(attempts):
+            try:
+                connection = self._connect()
+                self._stage = "select_folder"
+                status, _ = connection.select(
+                    message.folder,
+                    readonly=request.post_action is PostAction.NONE,
+                )
+                if status != "OK":
+                    raise RuntimeError("无法打开邮件文件夹")
+                identifier = _uid_bytes(message.transport_id)
+                self._stage = "download_message"
+                payloads = _fetch_uid_messages(connection, [identifier])
+                if not payloads:
+                    raise RuntimeError("服务器未返回邮件正文")
+                _identifier, raw = payloads[0]
+                loaded = parse_email_message(
+                    raw,
+                    folder=message.folder,
+                    keywords=request.keywords,
+                    custom_pattern=request.custom_pattern,
+                )
+                loaded = replace(
+                    loaded,
+                    provider_message_id=message.provider_message_id,
+                    transport_id=message.transport_id,
+                    message_id=message.message_id,
+                    account_id=message.account_id,
+                    body_loaded=True,
+                )
+                if not request.include_raw:
+                    loaded = replace(loaded, raw_eml=b"")
+                if loaded.matched_values and request.post_action is not PostAction.NONE:
+                    self._stage = "post_action"
+                    _apply_post_action(connection, identifier, request)
+                self._stage = "ready"
+                return loaded
+            except TimeoutError:
+                self._disconnect(abort=True)
+                if attempt + 1 < attempts:
+                    continue
+                raise
+        raise RuntimeError("邮件正文加载失败")
 
     def close(self) -> None:
         self._disconnect(abort=False)
@@ -276,13 +311,31 @@ def _raw_from_fetch(fetch_data: object) -> bytes:
 def _fetch_uid_messages(
     connection: imaplib.IMAP4, identifiers: list[bytes]
 ) -> list[tuple[bytes, bytes]]:
-    """Fetch a small UID batch, falling back only for missing server responses."""
+    """Fetch a small full-message UID batch."""
+
+    return _fetch_uid_payloads(connection, identifiers, "(UID RFC822)")
+
+
+def _fetch_uid_headers(
+    connection: imaplib.IMAP4, identifiers: list[bytes]
+) -> list[tuple[bytes, bytes]]:
+    """Fetch only headers so the list appears before message bodies."""
+
+    return _fetch_uid_payloads(connection, identifiers, IMAP_HEADER_QUERY)
+
+
+def _fetch_uid_payloads(
+    connection: imaplib.IMAP4,
+    identifiers: list[bytes],
+    query: str,
+) -> list[tuple[bytes, bytes]]:
+    """Fetch a UID batch, falling back only for missing server responses."""
 
     if not identifiers:
         return []
     normalized = [_uid_bytes(identifier) for identifier in identifiers]
     sequence_set = b",".join(normalized)
-    status, fetch_data = connection.uid("fetch", sequence_set, "(UID RFC822)")
+    status, fetch_data = connection.uid("fetch", sequence_set, query)
     mapped = _raw_messages_by_uid(fetch_data) if status == "OK" else {}
     if len(normalized) == 1 and normalized[0] not in mapped:
         raw = _raw_from_fetch(fetch_data)
@@ -292,9 +345,7 @@ def _fetch_uid_messages(
     for identifier in normalized:
         if identifier in mapped:
             continue
-        status, individual_data = connection.uid(
-            "fetch", identifier, "(UID RFC822)"
-        )
+        status, individual_data = connection.uid("fetch", identifier, query)
         if status != "OK":
             continue
         individual = _raw_messages_by_uid(individual_data)
@@ -306,6 +357,34 @@ def _fetch_uid_messages(
         for identifier in normalized
         if identifier in mapped
     ]
+
+
+def _parse_header_message(
+    raw: bytes,
+    folder: str,
+    request: FetchRequest,
+) -> MailMessage:
+    header_bytes = raw.rstrip(b"\r\n") + b"\r\n\r\n"
+    parsed = parse_email_message(
+        header_bytes,
+        folder=folder,
+        keywords=request.keywords,
+        custom_pattern=request.custom_pattern,
+    )
+    return replace(
+        parsed,
+        text_body="",
+        html_body="",
+        web_html_body="",
+        matched_values=extract_matches(
+            parsed.subject,
+            keywords=request.keywords,
+            custom_pattern=request.custom_pattern,
+        ),
+        attachments=(),
+        raw_eml=b"",
+        body_loaded=False,
+    )
 
 
 def _raw_messages_by_uid(fetch_data: object) -> dict[bytes, bytes]:
@@ -396,7 +475,9 @@ def _classify_imap_error(
             "list_folders": "读取邮箱文件夹超时",
             "select_folder": "打开邮件文件夹超时",
             "search": "搜索邮件目录超时",
+            "download_headers": "同步邮件列表超时",
             "download_messages": "下载邮件内容超时",
+            "download_message": "下载邮件正文超时",
             "post_action": "执行邮件后处理超时",
         }
         detail = details.get(stage, "收取邮件超时")

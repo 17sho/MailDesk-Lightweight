@@ -4,7 +4,7 @@ import threading
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
-from mailbox_manager.domain.models import EmailAccount, FetchRequest
+from mailbox_manager.domain.models import EmailAccount, FetchRequest, MailMessage
 from mailbox_manager.domain.status import AccountStatus
 from mailbox_manager.protocols.oauth import OAuthTokenProvider
 from mailbox_manager.protocols.smtp_client import SmtpClient
@@ -54,6 +54,44 @@ class FetchWorker(QRunnable):
             self.signals.status.emit(account_id, AccountStatus.UNKNOWN_ERROR, "收件任务异常")
         finally:
             self.signals.finished.emit(account_id)
+
+
+class MessageLoadSignals(QObject):
+    result = Signal(int, object, object)
+    finished = Signal(int)
+
+
+class MessageLoadWorker(QRunnable):
+    """Load one complete message without blocking the message list UI."""
+
+    def __init__(
+        self,
+        service: FetchService,
+        account: EmailAccount,
+        message: MailMessage,
+        request: FetchRequest,
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.account = account
+        self.message = message
+        self.request = request
+        self.message_id = message.message_id or 0
+        self.signals = MessageLoadSignals()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            loaded = self.service.load_message(
+                self.account,
+                self.message,
+                self.request,
+            )
+            self.signals.result.emit(self.message_id, loaded, None)
+        except Exception as exc:
+            self.signals.result.emit(self.message_id, None, exc)
+        finally:
+            self.signals.finished.emit(self.message_id)
 
 
 class SmtpProbeSignals(QObject):

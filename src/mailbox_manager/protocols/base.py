@@ -25,7 +25,12 @@ class EmailClientBase(ABC):
 
     @abstractmethod
     def fetch_messages(self, request: FetchRequest) -> FetchResult:
-        """Fetch a bounded collection of messages."""
+        """Fetch a bounded collection of message headers."""
+
+    def fetch_message(self, message: MailMessage, request: FetchRequest) -> MailMessage:
+        """Load one complete message after the user selects its header."""
+
+        raise NotImplementedError
 
     @abstractmethod
     def close(self) -> None:

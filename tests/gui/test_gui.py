@@ -872,6 +872,60 @@ def test_message_view_renders_inline_and_remote_images_directly(qtbot, tmp_path)
     assert window.message_tools_bar.isHidden() is False
 
 
+def test_header_list_waits_for_click_then_loads_message_body(qtbot, tmp_path) -> None:
+    database = Database(tmp_path / "lazy-message-gui.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"Y" * 32))
+    accounts.add_many([_account()])
+    account = accounts.list_all()[0]
+    assert account.account_id is not None
+    messages = MessageRepository(database)
+    messages.add_many(
+        account.account_id,
+        (
+            MailMessage(
+                provider_message_id="lazy-gui",
+                transport_id="88",
+                folder="INBOX",
+                subject="先显示列表",
+                sender="sender@example.com",
+                body_loaded=False,
+            ),
+        ),
+    )
+
+    class LazyService:
+        def load_message(self, _account, header, _request):
+            return MailMessage(
+                message_id=header.message_id,
+                account_id=header.account_id,
+                provider_message_id=header.provider_message_id,
+                transport_id=header.transport_id,
+                folder=header.folder,
+                subject=header.subject,
+                sender=header.sender,
+                text_body="点击后才获取的正文",
+                body_loaded=True,
+            )
+
+    window = MainWindow(accounts, messages, fetch_service=LazyService())
+    qtbot.addWidget(window)
+
+    window._account_row_clicked(window.account_model.index(0, 1))
+
+    assert window.message_list.count() == 1
+    assert window.message_list.currentRow() == -1
+    assert "单击一封邮件" in window.message_context_label.text()
+
+    window.message_list.setCurrentRow(0)
+    qtbot.waitUntil(
+        lambda: "点击后才获取的正文" in window.message_body.toPlainText(),
+        timeout=3000,
+    )
+
+    assert window._displayed_messages[0].body_loaded is True
+
+
 def test_main_message_detail_displays_image_attachments_and_download_panel(
     qtbot, tmp_path
 ) -> None:

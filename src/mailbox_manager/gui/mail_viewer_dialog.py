@@ -25,15 +25,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mailbox_manager.domain.models import EmailAccount, MailAttachment, MailMessage
+from mailbox_manager.domain.models import (
+    EmailAccount,
+    FetchRequest,
+    MailAttachment,
+    MailMessage,
+)
 from mailbox_manager.gui.email_body_view import EmailBodyView
-from mailbox_manager.gui.workers import TranslationWorker
+from mailbox_manager.gui.workers import MessageLoadWorker, TranslationWorker
 from mailbox_manager.mail.display import (
     MessageDisplayContent,
     select_stored_message_display_content,
 )
 from mailbox_manager.mail.parser import clean_message_text
 from mailbox_manager.mail.web_document import prepare_email_web_document
+from mailbox_manager.services.fetch_service import FetchService
 from mailbox_manager.services.translation_service import (
     DEFAULT_TRANSLATION_LANGUAGE,
     TRANSLATION_LANGUAGES,
@@ -57,6 +63,8 @@ class MailViewerDialog(QDialog):
         dark: bool = False,
         selected_message_id: int | None = None,
         message_repository: MessageRepository | None = None,
+        fetch_service: FetchService | None = None,
+        fetch_request: FetchRequest | None = None,
         translation_service: TranslationService | None = None,
         translation_language: str = DEFAULT_TRANSLATION_LANGUAGE,
         translation_confirm: bool = True,
@@ -71,6 +79,8 @@ class MailViewerDialog(QDialog):
         self.account_id = account.account_id or 0
         self._account = account
         self._message_repository = message_repository
+        self._fetch_service = fetch_service
+        self._fetch_request = fetch_request or FetchRequest()
         self._translation_service = translation_service or TranslationService()
         self._translation_language = _valid_translation_language(translation_language)
         self._translation_confirm = bool(translation_confirm)
@@ -78,6 +88,7 @@ class MailViewerDialog(QDialog):
         self._dark = dark
         self._pool = QThreadPool(self)
         self._translation_workers: dict[int, TranslationWorker] = {}
+        self._message_load_workers: dict[int, MessageLoadWorker] = {}
         self._render_generation = 0
         self._translation_generation = 0
         self._active_translation_generation: int | None = None
@@ -277,10 +288,19 @@ class MailViewerDialog(QDialog):
                         widget.setCurrentRow(row)
                         return
         if self.inbox_list.count():
-            self.inbox_list.setCurrentRow(0)
-        elif self.special_list.count():
-            self.folder_tabs.setCurrentWidget(self.special_list)
-            self.special_list.setCurrentRow(0)
+            first_index = self.inbox_list.item(0).data(Qt.ItemDataRole.UserRole)
+            if isinstance(first_index, int) and self._messages[first_index].body_loaded:
+                self.inbox_list.setCurrentRow(0)
+                return
+        if self.special_list.count():
+            first_index = self.special_list.item(0).data(Qt.ItemDataRole.UserRole)
+            if isinstance(first_index, int) and self._messages[first_index].body_loaded:
+                self.folder_tabs.setCurrentWidget(self.special_list)
+                self.special_list.setCurrentRow(0)
+                return
+        self.inbox_list.setCurrentRow(-1)
+        self.special_list.setCurrentRow(-1)
+        self.body.setPlainText("邮件列表已加载，单击一封邮件查看正文。")
 
     def _populate_lists(self, *_args) -> None:
         query = self.search_input.text().strip().casefold() if hasattr(self, "search_input") else ""
@@ -301,7 +321,11 @@ class MailViewerDialog(QDialog):
                 if message.received_at
                 else ""
             )
-            preview = " ".join(clean_message_text(message.text_body).split())[:105]
+            preview = (
+                " ".join(clean_message_text(message.text_body).split())[:105]
+                if message.body_loaded
+                else "点击后加载正文与附件"
+            )
             sender = message.sender_display or "未知发件人"
             item = QListWidgetItem(
                 f"{sender}   {received}\n{message.subject or '(无主题)'}\n{preview}"
@@ -344,6 +368,14 @@ class MailViewerDialog(QDialog):
             else "时间未知"
         )
         self.meta_label.setText(f"{received}  ·  {message.folder}")
+        if not message.body_loaded:
+            self._populate_attachments(())
+            self._current_display_content = None
+            self._translation_source_text = ""
+            self._refresh_translation_controls()
+            self.body.setPlainText("正在获取邮件正文、图片和附件，请稍候…")
+            self._queue_message_load(message)
+            return
         self._populate_attachments(message.attachments)
         display_content = select_stored_message_display_content(message)
         self._current_display_content = display_content
@@ -356,6 +388,47 @@ class MailViewerDialog(QDialog):
             )
         self._refresh_translation_controls()
         self._render_original_view()
+
+    def _queue_message_load(self, message: MailMessage) -> None:
+        message_id = message.message_id or 0
+        if message_id <= 0 or message_id in self._message_load_workers:
+            return
+        if self._fetch_service is None:
+            self.body.setPlainText("当前阅读器没有配置正文加载服务。")
+            return
+        worker = MessageLoadWorker(
+            self._fetch_service,
+            self._account,
+            message,
+            self._fetch_request,
+        )
+        worker.signals.result.connect(self._message_load_result)
+        worker.signals.finished.connect(self._message_load_finished)
+        self._message_load_workers[message_id] = worker
+        self._pool.start(worker)
+
+    def _message_load_result(
+        self,
+        message_id: int,
+        loaded: MailMessage | None,
+        error: Exception | None,
+    ) -> None:
+        if self._closed:
+            return
+        if loaded is None:
+            if self._current_message and self._current_message.message_id == message_id:
+                detail = str(error).strip() if error is not None else "未知错误"
+                self.body.setPlainText(f"邮件正文加载失败：{detail}")
+                self._show_feedback("正文加载失败，请检查网络或账号状态")
+            return
+        for index, candidate in enumerate(self._messages):
+            if candidate.message_id == message_id:
+                self._messages[index] = loaded
+        if self._current_message and self._current_message.message_id == message_id:
+            self._show_message(loaded)
+
+    def _message_load_finished(self, message_id: int) -> None:
+        self._message_load_workers.pop(message_id, None)
 
     def _render_original_view(self) -> None:
         display_content = self._current_display_content

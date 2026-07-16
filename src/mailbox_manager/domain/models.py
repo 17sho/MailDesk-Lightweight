@@ -129,6 +129,7 @@ class MailMessage:
     attachments: tuple[MailAttachment, ...] = ()
     raw_eml: bytes = field(default=b"", repr=False)
     eml_path: str = ""
+    body_loaded: bool = True
     message_id: int | None = None
     account_id: int | None = None
 
@@ -150,7 +151,7 @@ class MessageSearchHit:
 @dataclass(frozen=True, slots=True)
 class FetchRequest:
     folders: tuple[str, ...] = ("INBOX",)
-    max_messages: int = 20
+    max_messages: int = 0
     keywords: tuple[str, ...] = ("verification code", "验证码", "reset password")
     custom_pattern: str = ""
     include_raw: bool = True

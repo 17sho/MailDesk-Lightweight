@@ -16,14 +16,25 @@ from mailbox_manager.storage.repositories import AccountRepository, MessageRepos
 
 
 class FakeClient:
-    def __init__(self, result: FetchResult) -> None:
+    def __init__(
+        self,
+        result: FetchResult,
+        loaded_message: MailMessage | None = None,
+    ) -> None:
         self.result = result
+        self.loaded_message = loaded_message
         self.closed = False
         self.request: FetchRequest | None = None
 
     def fetch_messages(self, request: FetchRequest) -> FetchResult:
         self.request = request
         return self.result
+
+    def fetch_message(self, _message: MailMessage, request: FetchRequest) -> MailMessage:
+        self.request = request
+        if self.loaded_message is None:
+            raise RuntimeError("no lazy body configured")
+        return self.loaded_message
 
     def close(self) -> None:
         self.closed = True
@@ -100,6 +111,62 @@ def test_fetch_service_passes_persisted_transport_ids_to_client(tmp_path) -> Non
 
     assert client.request is not None
     assert client.request.known_transport_ids == frozenset({("INBOX", "42")})
+
+
+def test_fetch_service_loads_and_persists_one_selected_message(tmp_path) -> None:
+    database = Database(tmp_path / "lazy-message.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"L" * 32))
+    accounts.add_many(
+        [
+            EmailAccount(
+                email="lazy@example.com",
+                provider="custom",
+                protocol=ProtocolType.IMAP,
+                host="imap.example.com",
+                port=993,
+                secret="secret",
+            )
+        ]
+    )
+    account = accounts.list_all()[0]
+    assert account.account_id is not None
+    messages = MessageRepository(database)
+    messages.add_many(
+        account.account_id,
+        (
+            MailMessage(
+                provider_message_id="lazy-provider",
+                transport_id="77",
+                folder="INBOX",
+                subject="邮件列表项",
+                body_loaded=False,
+            ),
+        ),
+    )
+    header = messages.list_for_account(account.account_id)[0]
+    client = FakeClient(
+        FetchResult(AccountStatus.SUCCESS),
+        MailMessage(
+            provider_message_id="provider-returned-by-server",
+            transport_id="77",
+            folder="INBOX",
+            subject="邮件列表项",
+            text_body="点击后加载的完整正文 123456",
+            matched_values=("123456",),
+            body_loaded=True,
+        ),
+    )
+    service = FetchService(accounts, messages, client_factory=lambda _account: client)
+
+    loaded = service.load_message(account, header, FetchRequest())
+
+    assert loaded.message_id == header.message_id
+    assert loaded.provider_message_id == "lazy-provider"
+    assert loaded.body_loaded is True
+    assert loaded.text_body == "点击后加载的完整正文 123456"
+    assert messages.get(header.message_id).body_loaded is True  # type: ignore[arg-type,union-attr]
+    assert client.closed is True
 
 
 def test_fetch_service_persists_failure_status_without_messages(tmp_path) -> None:

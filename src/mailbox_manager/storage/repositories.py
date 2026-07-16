@@ -412,8 +412,9 @@ class MessageRepository:
                         account_id, provider_message_id, transport_id, folder,
                         subject, sender, sender_name,
                         recipients_json, catch_all_recipient, received_at, text_body,
-                        html_body, web_html_body, matched_values_json, eml_path, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        html_body, web_html_body, matched_values_json, eml_path,
+                        body_loaded, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(account_id, provider_message_id, folder) DO UPDATE SET
                         transport_id = CASE
                             WHEN excluded.transport_id <> '' THEN excluded.transport_id
@@ -425,19 +426,30 @@ class MessageRepository:
                         recipients_json = excluded.recipients_json,
                         catch_all_recipient = excluded.catch_all_recipient,
                         received_at = excluded.received_at,
-                        text_body = excluded.text_body,
+                        text_body = CASE
+                            WHEN excluded.body_loaded = 1 THEN excluded.text_body
+                            ELSE messages.text_body
+                        END,
                         html_body = CASE
-                            WHEN excluded.html_body <> '' THEN excluded.html_body
+                            WHEN excluded.body_loaded = 1 THEN excluded.html_body
                             ELSE messages.html_body
                         END,
                         web_html_body = CASE
-                            WHEN excluded.web_html_body <> '' THEN excluded.web_html_body
+                            WHEN excluded.body_loaded = 1 THEN excluded.web_html_body
                             ELSE messages.web_html_body
                         END,
-                        matched_values_json = excluded.matched_values_json,
+                        matched_values_json = CASE
+                            WHEN excluded.body_loaded = 1 OR messages.body_loaded = 0
+                            THEN excluded.matched_values_json
+                            ELSE messages.matched_values_json
+                        END,
                         eml_path = CASE
                             WHEN excluded.eml_path <> '' THEN excluded.eml_path
                             ELSE messages.eml_path
+                        END,
+                        body_loaded = CASE
+                            WHEN messages.body_loaded = 1 OR excluded.body_loaded = 1 THEN 1
+                            ELSE 0
                         END
                     """,
                     (
@@ -456,6 +468,7 @@ class MessageRepository:
                         message.web_html_body[: 12 * 1024 * 1024],
                         json.dumps(message.matched_values, ensure_ascii=False),
                         message.eml_path,
+                        int(message.body_loaded),
                         _now(),
                     ),
                 )
@@ -490,18 +503,19 @@ class MessageRepository:
             ).fetchall()
         return frozenset((str(row["folder"]), str(row["transport_id"])) for row in rows)
 
-    def list_for_account(self, account_id: int, limit: int = 500) -> list[MailMessage]:
-        bounded_limit = max(1, min(limit, 1000))
+    def list_for_account(self, account_id: int, limit: int = 0) -> list[MailMessage]:
+        bounded_limit = max(1, min(limit, 100_000)) if limit > 0 else None
         with self._database.connect() as connection:
-            rows = connection.execute(
-                """
+            query = """
                 SELECT * FROM messages
                 WHERE account_id = ?
                 ORDER BY COALESCE(received_at, created_at) DESC, id DESC
-                LIMIT ?
-                """,
-                (account_id, bounded_limit),
-            ).fetchall()
+            """
+            params: tuple[object, ...] = (account_id,)
+            if bounded_limit is not None:
+                query += " LIMIT ?"
+                params = (account_id, bounded_limit)
+            rows = connection.execute(query, params).fetchall()
             attachments = self._attachments_for_messages(
                 connection, [int(row["id"]) for row in rows]
             )
@@ -756,4 +770,7 @@ class MessageRepository:
             matched_values=tuple(json.loads(row["matched_values_json"])),  # type: ignore[index]
             attachments=attachments,
             eml_path=row["eml_path"],  # type: ignore[index]
+            body_loaded=(
+                bool(row["body_loaded"]) if "body_loaded" in row_keys else True  # type: ignore[index]
+            ),
         )

@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS messages (
     web_html_body TEXT NOT NULL DEFAULT '',
     matched_values_json TEXT NOT NULL DEFAULT '[]',
     eml_path TEXT NOT NULL DEFAULT '',
+    body_loaded INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     UNIQUE(account_id, provider_message_id, folder)
 );
@@ -177,6 +178,7 @@ MESSAGE_COLUMNS: dict[str, str] = {
     "sender_name": "TEXT NOT NULL DEFAULT ''",
     "html_body": "TEXT NOT NULL DEFAULT ''",
     "web_html_body": "TEXT NOT NULL DEFAULT ''",
+    "body_loaded": "INTEGER NOT NULL DEFAULT 1",
 }
 
 PROXY_COLUMNS: dict[str, str] = {
@@ -232,4 +234,4 @@ class Database:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_proxies_default ON proxies(is_default DESC, id)"
             )
-            connection.execute("PRAGMA user_version = 8")
+            connection.execute("PRAGMA user_version = 9")

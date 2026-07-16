@@ -36,6 +36,7 @@ class FakeImap:
     def __init__(self, *_args, **_kwargs) -> None:
         self.logged_in = False
         self.closed = False
+        self.fetch_queries: list[str] = []
 
     def login(self, username: str, secret: str):
         assert username == "owner@example.com"
@@ -50,6 +51,7 @@ class FakeImap:
     def uid(self, command: str, *_args):
         if command.casefold() == "search":
             return "OK", [b"42"]
+        self.fetch_queries.append(str(_args[-1]))
         raw = (
             b"Subject: verification code\r\n"
             b"From: security@example.com\r\n"
@@ -72,11 +74,20 @@ def test_imap_client_fetches_and_parses_bounded_messages() -> None:
     client = ImapClient(_imap_account(), connection_factory=lambda *_a, **_kw: fake)
 
     result = client.fetch_messages(FetchRequest(max_messages=1))
-    client.close()
 
     assert result.status is AccountStatus.SUCCESS
     assert result.messages[0].provider_message_id == "<imap-42@example.com>"
-    assert "771204" in result.messages[0].matched_values
+    assert result.messages[0].body_loaded is False
+    assert "771204" not in result.messages[0].matched_values
+    assert "BODY.PEEK[HEADER.FIELDS" in fake.fetch_queries[-1]
+    assert "RFC822" not in fake.fetch_queries[-1]
+
+    loaded = client.fetch_message(result.messages[0], FetchRequest(max_messages=1))
+    client.close()
+
+    assert loaded.body_loaded is True
+    assert "771204" in loaded.matched_values
+    assert "RFC822" in fake.fetch_queries[-1]
     assert fake.closed is True
 
 
@@ -225,7 +236,7 @@ def test_imap_client_reports_the_timeout_stage_without_provider_details() -> Non
     ).fetch_messages(FetchRequest(max_messages=1))
 
     assert result.status is AccountStatus.TIMEOUT
-    assert "下载邮件内容超时" in result.detail
+    assert "同步邮件列表超时" in result.detail
     assert "private provider diagnostics" not in result.detail
 
 
@@ -251,28 +262,25 @@ def test_graph_client_exchanges_refresh_token_and_fetches_messages() -> None:
             assert b"scope=" not in request.content
             return httpx.Response(200, json={"access_token": "access", "expires_in": 3600})
         assert request.headers["Authorization"] == "Bearer access"
+        item = {
+            "id": "graph-1",
+            "subject": "验证码",
+            "from": {
+                "emailAddress": {
+                    "name": "Security Team",
+                    "address": "security@example.com",
+                }
+            },
+            "toRecipients": [{"emailAddress": {"address": "owner@outlook.com"}}],
+            "receivedDateTime": "2026-07-13T10:00:00Z",
+            "body": {"contentType": "html", "content": "<p>Code <b>889900</b></p>"},
+            "internetMessageHeaders": [
+                {"name": "X-Original-To", "value": "alias@outlook.com"}
+            ],
+        }
         return httpx.Response(
             200,
-            json={
-                "value": [
-                    {
-                        "id": "graph-1",
-                        "subject": "验证码",
-                        "from": {
-                            "emailAddress": {
-                                "name": "Security Team",
-                                "address": "security@example.com",
-                            }
-                        },
-                        "toRecipients": [{"emailAddress": {"address": "owner@outlook.com"}}],
-                        "receivedDateTime": "2026-07-13T10:00:00Z",
-                        "body": {"contentType": "html", "content": "<p>Code <b>889900</b></p>"},
-                        "internetMessageHeaders": [
-                            {"name": "X-Original-To", "value": "alias@outlook.com"}
-                        ],
-                    }
-                ]
-            },
+            json=item if request.url.path.endswith("/messages/graph-1") else {"value": [item]},
         )
 
     account = EmailAccount(
@@ -291,8 +299,13 @@ def test_graph_client_exchanges_refresh_token_and_fetches_messages() -> None:
     assert result.messages[0].sender_name == "Security Team"
     assert result.messages[0].sender_display == "Security Team <security@example.com>"
     assert result.messages[0].catch_all_recipient == "alias@outlook.com"
-    assert "889900" in result.messages[0].matched_values
-    assert "<b>889900</b>" in result.messages[0].web_html_body
+    assert result.messages[0].body_loaded is False
+    list_call = next(call for call in calls if "/messages?" in call)
+    assert "body" not in list_call.casefold()
+    assert not any("/attachments" in call for call in calls)
+    loaded = client.fetch_message(result.messages[0], FetchRequest(max_messages=5))
+    assert "889900" in loaded.matched_values
+    assert "<b>889900</b>" in loaded.web_html_body
     assert any("oauth2" in call for call in calls)
     assert len(json.dumps(result.messages[0].__repr__())) < 1000
 
@@ -317,22 +330,23 @@ def test_graph_client_fetches_inline_cid_attachments() -> None:
                     ]
                 },
             )
+        item = {
+            "id": "graph-cid",
+            "subject": "CID image",
+            "body": {
+                "contentType": "html",
+                "content": '<p>Hello</p><img src="cid:brand-logo">',
+            },
+            "toRecipients": [],
+            "internetMessageHeaders": [],
+        }
         return httpx.Response(
             200,
-            json={
-                "value": [
-                    {
-                        "id": "graph-cid",
-                        "subject": "CID image",
-                        "body": {
-                            "contentType": "html",
-                            "content": '<p>Hello</p><img src="cid:brand-logo">',
-                        },
-                        "toRecipients": [],
-                        "internetMessageHeaders": [],
-                    }
-                ]
-            },
+            json=(
+                item
+                if request.url.path.endswith("/messages/graph-cid")
+                else {"value": [item]}
+            ),
         )
 
     account = EmailAccount(
@@ -347,8 +361,12 @@ def test_graph_client_fetches_inline_cid_attachments() -> None:
     )
 
     assert result.status is AccountStatus.SUCCESS
-    assert "data:image/png;base64," in result.messages[0].html_body
-    assert "data:image/png;base64," in result.messages[0].web_html_body
+    assert result.messages[0].body_loaded is False
+    loaded = OutlookGraphClient(
+        account, transport=httpx.MockTransport(handler)
+    ).fetch_message(result.messages[0], FetchRequest(max_messages=1))
+    assert "data:image/png;base64," in loaded.html_body
+    assert "data:image/png;base64," in loaded.web_html_body
 
 
 def test_graph_client_fetches_downloadable_file_attachments() -> None:
@@ -373,20 +391,21 @@ def test_graph_client_fetches_downloadable_file_attachments() -> None:
                     ]
                 },
             )
+        item = {
+            "id": "graph-file",
+            "subject": "Attachment",
+            "body": {"contentType": "text", "content": "See attachment"},
+            "hasAttachments": True,
+            "toRecipients": [],
+            "internetMessageHeaders": [],
+        }
         return httpx.Response(
             200,
-            json={
-                "value": [
-                    {
-                        "id": "graph-file",
-                        "subject": "Attachment",
-                        "body": {"contentType": "text", "content": "See attachment"},
-                        "hasAttachments": True,
-                        "toRecipients": [],
-                        "internetMessageHeaders": [],
-                    }
-                ]
-            },
+            json=(
+                item
+                if request.url.path.endswith("/messages/graph-file")
+                else {"value": [item]}
+            ),
         )
 
     account = EmailAccount(
@@ -402,7 +421,12 @@ def test_graph_client_fetches_downloadable_file_attachments() -> None:
         transport=httpx.MockTransport(handler),
     ).fetch_messages(FetchRequest(max_messages=1))
 
-    attachment = result.messages[0].attachments[0]
+    assert result.messages[0].attachments == ()
+    loaded = OutlookGraphClient(
+        account,
+        transport=httpx.MockTransport(handler),
+    ).fetch_message(result.messages[0], FetchRequest(max_messages=1))
+    attachment = loaded.attachments[0]
     assert attachment.filename == "report.pdf"
     assert attachment.content_type == "application/pdf"
     assert attachment.provider_attachment_id == "attachment-1"

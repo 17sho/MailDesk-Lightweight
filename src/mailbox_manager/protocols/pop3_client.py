@@ -13,11 +13,12 @@ from mailbox_manager.domain.models import (
     FetchRequest,
     FetchResult,
     MailFolder,
+    MailMessage,
     PostAction,
     ProxyConfig,
 )
 from mailbox_manager.domain.status import AccountStatus
-from mailbox_manager.mail.parser import parse_email_message
+from mailbox_manager.mail.parser import extract_matches, parse_email_message
 from mailbox_manager.protocols.base import EmailClientBase
 from mailbox_manager.protocols.proxy_socket import create_proxy_socket
 
@@ -97,7 +98,12 @@ class Pop3Client(EmailClientBase):
             if not request.unlimited:
                 candidates = candidates[: request.max_messages]
             for number, transport_id in candidates:
-                _status, lines, _octets = connection.retr(number)
+                body_loaded = False
+                try:
+                    _status, lines, _octets = connection.top(number, 0)
+                except (AttributeError, poplib.error_proto):
+                    _status, lines, _octets = connection.retr(number)
+                    body_loaded = True
                 raw = b"\r\n".join(lines) + b"\r\n"
                 message = replace(
                     parse_email_message(
@@ -107,12 +113,28 @@ class Pop3Client(EmailClientBase):
                         custom_pattern=request.custom_pattern,
                     ),
                     transport_id=transport_id,
+                    body_loaded=body_loaded,
                 )
+                if not body_loaded:
+                    message = replace(
+                        message,
+                        text_body="",
+                        html_body="",
+                        web_html_body="",
+                        matched_values=extract_matches(
+                            message.subject,
+                            keywords=request.keywords,
+                            custom_pattern=request.custom_pattern,
+                        ),
+                        attachments=(),
+                        raw_eml=b"",
+                    )
                 if not request.include_raw:
                     message = replace(message, raw_eml=b"")
                 messages.append(message)
                 if (
-                    message.matched_values
+                    body_loaded
+                    and message.matched_values
                     and request.post_action is PostAction.DELETE
                     and request.confirmed_actions
                 ):
@@ -121,6 +143,45 @@ class Pop3Client(EmailClientBase):
         except Exception as exc:
             status, detail = _classify_pop_error(exc)
             return FetchResult(status, tuple(messages), detail)
+
+    def fetch_message(self, message: MailMessage, request: FetchRequest) -> MailMessage:
+        connection = self._connect()
+        count, _size = connection.stat()
+        number = next(
+            (
+                candidate_number
+                for candidate_number, transport_id in _pop_transport_ids(connection, count)
+                if transport_id == message.transport_id
+            ),
+            None,
+        )
+        if number is None:
+            raise RuntimeError("服务器中找不到这封邮件")
+        _status, lines, _octets = connection.retr(number)
+        raw = b"\r\n".join(lines) + b"\r\n"
+        loaded = parse_email_message(
+            raw,
+            folder="INBOX",
+            keywords=request.keywords,
+            custom_pattern=request.custom_pattern,
+        )
+        loaded = replace(
+            loaded,
+            provider_message_id=message.provider_message_id,
+            transport_id=message.transport_id,
+            message_id=message.message_id,
+            account_id=message.account_id,
+            body_loaded=True,
+        )
+        if not request.include_raw:
+            loaded = replace(loaded, raw_eml=b"")
+        if (
+            loaded.matched_values
+            and request.post_action is PostAction.DELETE
+            and request.confirmed_actions
+        ):
+            connection.dele(number)
+        return loaded
 
     def close(self) -> None:
         connection, self._connection = self._connection, None

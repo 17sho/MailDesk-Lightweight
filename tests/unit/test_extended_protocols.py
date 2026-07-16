@@ -190,6 +190,7 @@ def test_imap_scans_special_folders_and_applies_confirmed_post_action() -> None:
     class ActionImap:
         def __init__(self, *_args, **_kwargs) -> None:
             self.selected: list[str] = []
+            self.readonly_values: list[bool] = []
             self.stores: list[tuple[object, ...]] = []
 
         def login(self, _username, _secret):
@@ -204,7 +205,7 @@ def test_imap_scans_special_folders_and_applies_confirmed_post_action() -> None:
 
         def select(self, folder, readonly=True):
             self.selected.append(folder)
-            assert readonly is False
+            self.readonly_values.append(readonly)
             return "OK", [b"1"]
 
         def uid(self, command, *args):
@@ -245,4 +246,15 @@ def test_imap_scans_special_folders_and_applies_confirmed_post_action() -> None:
 
     assert result.status is AccountStatus.SUCCESS
     assert fake.selected == ["INBOX", "Junk"]
+    assert fake.readonly_values == [True, True]
+    assert len(fake.stores) == 0
+    for message in result.messages:
+        client.fetch_message(
+            message,
+            FetchRequest(
+                post_action=PostAction.MARK_READ,
+                confirmed_actions=True,
+            ),
+        )
     assert len(fake.stores) == 2
+    assert fake.readonly_values == [True, True, False, False]

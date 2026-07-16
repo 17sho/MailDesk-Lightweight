@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 from contextlib import suppress
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 from uuid import uuid4
@@ -181,8 +182,8 @@ class OutlookGraphClient(EmailClientBase):
                         {
                             "$top": 50 if remaining is None else min(remaining, 50),
                             "$select": (
-                                "id,subject,from,toRecipients,receivedDateTime,body,"
-                                "internetMessageHeaders,hasAttachments"
+                                "id,subject,from,toRecipients,receivedDateTime,"
+                                "internetMessageHeaders"
                             ),
                             "$orderby": "receivedDateTime desc",
                         }
@@ -197,18 +198,13 @@ class OutlookGraphClient(EmailClientBase):
                             if (folder_label, message_id) in request.known_transport_ids:
                                 page_had_known_message = True
                                 continue
-                            message = self._parse_item(item, folder_label, request)
+                            message = self._parse_item(
+                                item,
+                                folder_label,
+                                request,
+                                load_content=False,
+                            )
                             messages.append(message)
-                            if (
-                                message.matched_values
-                                and request.post_action.value != "none"
-                            ):
-                                self.apply_action(
-                                    message,
-                                    request.post_action,
-                                    request.action_target_folder,
-                                    confirmed=request.confirmed_actions,
-                                )
                             if remaining is not None:
                                 remaining -= 1
                                 if remaining <= 0:
@@ -228,17 +224,54 @@ class OutlookGraphClient(EmailClientBase):
             status, detail = _classify_graph_error(exc)
             return FetchResult(status, tuple(messages), detail)
 
+    def fetch_message(self, message: MailMessage, request: FetchRequest) -> MailMessage:
+        identifier = quote(message.transport_id or message.provider_message_id, safe="")
+        if not identifier:
+            raise ValueError("邮件缺少 Graph 标识，无法加载正文")
+        item = self._get(
+            f"{GRAPH_ROOT}/me/messages/{identifier}",
+            {
+                "$select": (
+                    "id,subject,from,toRecipients,receivedDateTime,body,"
+                    "internetMessageHeaders,hasAttachments"
+                )
+            },
+        )
+        loaded = self._parse_item(item, message.folder, request, load_content=True)
+        loaded = replace(
+            loaded,
+            provider_message_id=message.provider_message_id,
+            transport_id=message.transport_id or loaded.transport_id,
+            message_id=message.message_id,
+            account_id=message.account_id,
+            body_loaded=True,
+        )
+        if loaded.matched_values and request.post_action.value != "none":
+            self.apply_action(
+                loaded,
+                request.post_action,
+                request.action_target_folder,
+                confirmed=request.confirmed_actions,
+            )
+        return loaded
+
     def _parse_item(
-        self, item: dict[str, object], folder: str, request: FetchRequest
+        self,
+        item: dict[str, object],
+        folder: str,
+        request: FetchRequest,
+        *,
+        load_content: bool = True,
     ) -> MailMessage:
-        body_value = item.get("body")
+        body_value = item.get("body") if load_content else None
         body = body_value if isinstance(body_value, dict) else {}
         content = body.get("content", "")
         raw_content = str(content)[:2_000_000]
         message_id = str(item.get("id", ""))
         attachments = (
             self._message_attachments(message_id)
-            if item.get("hasAttachments") or "cid:" in raw_content.casefold()
+            if load_content
+            and (item.get("hasAttachments") or "cid:" in raw_content.casefold())
             else ()
         )
         html_body = ""
@@ -299,6 +332,7 @@ class OutlookGraphClient(EmailClientBase):
                 custom_pattern=request.custom_pattern,
             ),
             attachments=attachments,
+            body_loaded=load_content,
         )
 
     def _message_attachments(

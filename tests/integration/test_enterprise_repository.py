@@ -48,9 +48,9 @@ def test_database_migrates_existing_v1_accounts_and_creates_enterprise_tables(tm
         version = connection.execute("PRAGMA user_version").fetchone()[0]
 
     assert {"smtp_host", "smtp_port", "oauth_provider", "proxy_id", "web_auth_status"} <= columns
-    assert {"sender_name", "transport_id"} <= message_columns
+    assert {"sender_name", "transport_id", "body_loaded"} <= message_columns
     assert {"proxies", "schedules", "webhooks", "automation_rules"} <= tables
-    assert version == 8
+    assert version == 9
 
 
 def test_group_and_tag_repositories_support_nested_assets(tmp_path) -> None:

@@ -5,7 +5,13 @@ from contextlib import nullcontext
 from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
-from mailbox_manager.domain.models import EmailAccount, FetchRequest, FetchResult, ProtocolType
+from mailbox_manager.domain.models import (
+    EmailAccount,
+    FetchRequest,
+    FetchResult,
+    MailMessage,
+    ProtocolType,
+)
 from mailbox_manager.domain.status import AccountStatus
 from mailbox_manager.protocols.imap_client import ImapClient
 from mailbox_manager.protocols.oauth import OAuthTokenProvider
@@ -21,6 +27,8 @@ from mailbox_manager.storage.repositories import AccountRepository, MessageRepos
 
 class FetchClient(Protocol):
     def fetch_messages(self, request: FetchRequest) -> FetchResult: ...
+
+    def fetch_message(self, message: MailMessage, request: FetchRequest) -> MailMessage: ...
 
     def close(self) -> None: ...
 
@@ -124,11 +132,23 @@ class FetchService:
                         eml_path=self._eml_store.save(account.account_id, message),
                     )
                     for message in result.messages
+                    if message.body_loaded and message.raw_eml
                 )
-                result = replace(result, messages=stored_messages)
+                stored_by_key = {
+                    (message.folder, message.transport_id): message
+                    for message in stored_messages
+                }
+                result = replace(
+                    result,
+                    messages=tuple(
+                        stored_by_key.get((message.folder, message.transport_id), message)
+                        for message in result.messages
+                    ),
+                )
             if self._automation is not None and result.messages and client is not None:
                 for message in result.messages:
-                    self._automation.process(account, message, client)
+                    if message.body_loaded:
+                        self._automation.process(account, message, client)
             if result.messages:
                 self._messages.add_many(account.account_id, result.messages)
             self._accounts.update_status(account.account_id, result.status, result.detail)
@@ -158,6 +178,76 @@ class FetchService:
                     "fetch", "exception", f"{account.email} {exc}", account.account_id
                 )
             return FetchResult(AccountStatus.UNKNOWN_ERROR, detail=detail)
+        finally:
+            if client is not None:
+                client.close()
+
+    def load_message(
+        self,
+        account: EmailAccount,
+        message: MailMessage,
+        request: FetchRequest,
+    ) -> MailMessage:
+        """Load and persist one complete message selected from the header list."""
+
+        if message.body_loaded:
+            return message
+        if account.account_id is None or message.message_id is None:
+            raise ValueError("邮件必须先同步到本地列表后才能加载正文")
+        client = None
+        try:
+            route_factory = (
+                self._client_factory
+                if isinstance(self._client_factory, RouteAwareClientFactory)
+                else None
+            )
+            route = route_factory.resolve_route(account) if route_factory else None
+            identity = (
+                route.identity
+                if route is not None
+                else f"proxy:{account.proxy_id}" if account.proxy_id else "direct"
+            )
+            guard = (
+                self._throttle.slot(identity, str(account.account_id))
+                if self._throttle is not None
+                else nullcontext()
+            )
+            with guard:
+                if route_factory is not None and route is not None:
+                    client = route_factory.create_for_route(account, route)
+                else:
+                    client = self._client_factory(account)
+                loaded = client.fetch_message(message, request)
+            if not loaded.body_loaded:
+                raise RuntimeError("服务器未返回完整邮件正文")
+            loaded = replace(
+                loaded,
+                provider_message_id=message.provider_message_id,
+                transport_id=message.transport_id,
+                folder=message.folder,
+                message_id=message.message_id,
+                account_id=account.account_id,
+                body_loaded=True,
+            )
+            if self._eml_store is not None and loaded.raw_eml:
+                loaded = replace(
+                    loaded,
+                    eml_path=self._eml_store.save(account.account_id, loaded),
+                )
+            if self._automation is not None and client is not None:
+                self._automation.process(account, loaded, client)
+            self._messages.add_many(account.account_id, (loaded,))
+            persisted = self._messages.get(message.message_id)
+            if self._audit is not None:
+                self._audit.record(
+                    "load_message",
+                    "success",
+                    f"{account.email} folder={message.folder}",
+                    account.account_id,
+                )
+            return persisted or loaded
+        except ProxyRouteError as exc:
+            raise RuntimeError(str(exc)) from exc
         finally:
             if client is not None:
                 client.close()

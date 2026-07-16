@@ -59,6 +59,7 @@ def create_main_window(paths: AppPaths | None = None) -> MainWindow:
     accounts = AccountRepository(database, cipher)
     messages = MessageRepository(database)
     settings = SettingsRepository(database)
+    migrate_header_sync_settings(settings)
     throttle_values = settings.get("enterprise_ui", {})
     throttle_values = throttle_values if isinstance(throttle_values, dict) else {}
     throttle = ComplianceThrottle(
@@ -101,6 +102,20 @@ def create_main_window(paths: AppPaths | None = None) -> MainWindow:
             updates_dir=paths.updates,
         ),
     )
+
+
+def migrate_header_sync_settings(settings: SettingsRepository) -> bool:
+    """Switch existing installations to unlimited header-first synchronization once."""
+
+    marker = "migration.header_sync_v1"
+    if settings.get(marker, False):
+        return False
+    current = settings.get("fetch", {})
+    values = dict(current) if isinstance(current, dict) else {}
+    values["max_messages"] = 0
+    settings.set("fetch", values)
+    settings.set(marker, True)
+    return True
 
 
 def configure_ui_font(application: QApplication) -> None:
