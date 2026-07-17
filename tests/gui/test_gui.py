@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QAbstractSpinBox,
     QApplication,
+    QCheckBox,
     QDialog,
     QFileDialog,
     QLabel,
@@ -428,6 +429,20 @@ def test_large_font_dialog_buttons_are_not_compressed(qtbot) -> None:
     finally:
         application.setFont(previous_font)
         application.setStyleSheet(previous_stylesheet)
+
+
+def test_settings_checkboxes_reserve_their_platform_font_width(qtbot) -> None:
+    dialog = EnterpriseSettingsDialog()
+    qtbot.addWidget(dialog)
+
+    checkboxes = dialog.findChildren(QCheckBox)
+
+    assert checkboxes
+    assert all(
+        checkbox.minimumWidth() >= checkbox.sizeHint().width()
+        for checkbox in checkboxes
+        if checkbox.text().strip()
+    )
 
 
 def test_close_window_dialog_returns_choice_and_remember_flag(qtbot) -> None:

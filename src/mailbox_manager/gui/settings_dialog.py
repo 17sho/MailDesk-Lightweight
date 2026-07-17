@@ -300,6 +300,8 @@ class EnterpriseSettingsDialog(QDialog):
     def _add_row(form: QFormLayout, label_text: str, field: QWidget) -> None:
         label = QLabel(label_text)
         label.setObjectName("settingsFieldLabel")
+        if isinstance(field, QCheckBox):
+            field.setMinimumWidth(field.sizeHint().width())
         if isinstance(field, QPlainTextEdit):
             label.setAlignment(
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
