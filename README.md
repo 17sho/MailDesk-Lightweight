@@ -2,13 +2,26 @@
 
 面向 Windows 与 macOS 的本地多邮箱管理工具轻量版。
 
-[![Version](https://img.shields.io/badge/version-0.4.3-2563eb.svg)](https://github.com/17sho/MailDesk-Lightweight/releases)
+[![Version](https://img.shields.io/badge/version-0.4.6-2563eb.svg)](https://github.com/17sho/MailDesk-Lightweight/releases)
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg?logo=windows11&logoColor=white)](https://github.com/17sho/MailDesk-Lightweight/releases)
 [![macOS](https://img.shields.io/badge/macOS-13%2B-111111.svg?logo=apple&logoColor=white)](docs/MACOS.md)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-f5c518.svg)](LICENSE)
 
 > 本仓库是 MailDesk 的独立轻量分支。它删除了 QtWebEngine、Chromium、QtQuick、QML 和 WebChannel，邮件阅读器使用 PySide6 原生 `QTextBrowser`。轻量版拥有独立的更新通道，不会自动升级到完整版。
+
+## 界面预览
+
+![MailDesk 工作台概览](docs/images/overview.png)
+
+<details>
+<summary>查看账号与邮件界面</summary>
+
+![MailDesk 账号与邮件](docs/images/accounts.png)
+
+</details>
+
+截图使用 `example.org` / `example.net` 虚构账号和演示邮件生成，不包含真实凭据或私人邮件。
 
 ## 轻量版有什么不同
 
@@ -104,7 +117,7 @@ python -m ruff check src tests build.py build_macos.py release.py
 python -m pytest -q
 ```
 
-当前轻量版回归结果：`347 passed, 3 skipped`。
+当前轻量版回归结果：`353 passed, 3 skipped`。
 
 ## 安全与使用范围
 
