@@ -3,9 +3,10 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -16,12 +17,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -29,9 +31,12 @@ from PySide6.QtWidgets import (
 from mailbox_manager import __version__
 from mailbox_manager.domain.models import FetchRequest, PostAction, ProxyType
 from mailbox_manager.gui.appearance import (
+    DEFAULT_FONT_SIZE,
     DEFAULT_FONT_WEIGHT,
+    DEFAULT_THEME,
     MAX_FONT_SIZE,
     MIN_FONT_SIZE,
+    THEME_BY_ID,
     normalized_appearance,
 )
 from mailbox_manager.gui.close_dialog import (
@@ -43,7 +48,9 @@ from mailbox_manager.gui.dashboard import (
     QUICK_ACTION_DEFINITIONS,
     configured_quick_action_ids,
 )
-from mailbox_manager.gui.icons import line_icon
+from mailbox_manager.gui.icons import line_icon, stateful_line_icon
+from mailbox_manager.gui.motion import AnimatedStackedWidget
+from mailbox_manager.gui.theme_picker import ThemePicker
 from mailbox_manager.mail.parser import extract_matches
 from mailbox_manager.services.translation_service import (
     DEFAULT_TRANSLATION_LANGUAGE,
@@ -67,10 +74,12 @@ class EnterpriseSettingsDialog(QDialog):
         values = values or {}
         self._webhook_options = list(webhook_options or [])
         self.setWindowTitle("MailDesk · 系统设置")
-        self.setMinimumSize(720, 520)
+        font_delta = max(0, self.font().pointSize() - 10)
+        minimum_width = min(1020, 720 + font_delta * 30)
+        self.setMinimumSize(minimum_width, 520)
         available = self.screen().availableGeometry()
         self.resize(
-            min(940, max(720, available.width() - 80)),
+            min(1060, max(minimum_width, available.width() - 80)),
             min(700, max(520, available.height() - 80)),
         )
 
@@ -86,7 +95,7 @@ class EnterpriseSettingsDialog(QDialog):
         shell_layout.setSpacing(0)
         shell_layout.addWidget(self._build_navigation())
 
-        self.pages = QStackedWidget()
+        self.pages = AnimatedStackedWidget(duration=130, distance=0)
         self.pages.setObjectName("settingsPages")
         self.pages.addWidget(self._fetch_page(values))
         self.pages.addWidget(self._schedule_page(values))
@@ -96,6 +105,7 @@ class EnterpriseSettingsDialog(QDialog):
         self.pages.addWidget(self._translation_page(values))
         self.pages.addWidget(self._appearance_page(values))
         self.pages.addWidget(self._dashboard_page(values))
+        self.pages.addWidget(self._close_behavior_page(values))
         self.pages.addWidget(self._update_page())
         shell_layout.addWidget(self.pages, 1)
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
@@ -135,7 +145,8 @@ class EnterpriseSettingsDialog(QDialog):
     def _build_navigation(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setObjectName("settingsSidebar")
-        sidebar.setFixedWidth(190)
+        font_delta = max(0, self.font().pointSize() - 10)
+        sidebar.setFixedWidth(min(350, 190 + font_delta * 20))
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(14, 20, 14, 18)
         sidebar_layout.setSpacing(10)
@@ -145,19 +156,45 @@ class EnterpriseSettingsDialog(QDialog):
         self.navigation = QListWidget()
         self.navigation.setObjectName("settingsNavigation")
         self.navigation.setSpacing(3)
-        self.navigation.addItems(
-            [
-                "收件与处理",
-                "调度与节流",
-                "网络代理",
-                "Webhook 对接",
-                "自动化规则",
-                "邮件翻译",
-                "外观与字体",
-                "工作台",
-                "系统更新",
-            ]
+        self.navigation.setIconSize(QSize(18, 18))
+        self.navigation.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
+        navigation_items = (
+            ("收件与处理", "inbox"),
+            ("调度与节流", "refresh"),
+            ("网络代理", "globe"),
+            ("Webhook 对接", "audit"),
+            ("自动化规则", "tools"),
+            ("邮件翻译", "mail"),
+            ("外观与字体", "settings"),
+            ("工作台", "users"),
+            ("关闭与托盘", "logout"),
+            ("系统更新", "download"),
+        )
+        application = QApplication.instance()
+        theme_id = str(
+            application.property("maildeskTheme") if application is not None else ""
+        )
+        current_theme = THEME_BY_ID.get(theme_id, THEME_BY_ID[DEFAULT_THEME])
+        legacy_dark = bool(
+            application is not None
+            and application.property("maildeskDarkTheme") is True
+        )
+        if current_theme.dark != legacy_dark:
+            current_theme = THEME_BY_ID["midnight" if legacy_dark else DEFAULT_THEME]
+        icon_color = current_theme.muted
+        selected_icon_color = current_theme.text
+        for label, icon_name in navigation_items:
+            icon = stateful_line_icon(
+                icon_name,
+                icon_color,
+                selected_icon_color,
+                18,
+            )
+            item = QListWidgetItem(icon, label)
+            item.setToolTip(label)
+            self.navigation.addItem(item)
         sidebar_layout.addWidget(self.navigation, 1)
         privacy = QLabel("账号凭据使用本机密钥\n加密保存在当前设备")
         privacy.setObjectName("settingsPrivacyHint")
@@ -173,7 +210,19 @@ class EnterpriseSettingsDialog(QDialog):
         footer_layout.setSpacing(12)
         hint = QLabel("更改将在保存后应用到后续任务")
         hint.setObjectName("settingsFooterHint")
+        self.footer_hint = hint
         footer_layout.addWidget(hint)
+        self.reset_button = QPushButton("恢复默认设置")
+        self.reset_button.setObjectName("secondaryButton")
+        application = QApplication.instance()
+        theme_id = str(
+            application.property("maildeskTheme") if application is not None else ""
+        )
+        current_theme = THEME_BY_ID.get(theme_id, THEME_BY_ID[DEFAULT_THEME])
+        self.reset_button.setIcon(line_icon("refresh", current_theme.muted, 16))
+        self.reset_button.setToolTip("恢复软件设置，不会删除邮箱账号、邮件、代理或规则")
+        self.reset_button.clicked.connect(self._confirm_reset_to_defaults)
+        footer_layout.addWidget(self.reset_button)
         footer_layout.addStretch(1)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -251,6 +300,18 @@ class EnterpriseSettingsDialog(QDialog):
     def _add_row(form: QFormLayout, label_text: str, field: QWidget) -> None:
         label = QLabel(label_text)
         label.setObjectName("settingsFieldLabel")
+        if isinstance(field, QPlainTextEdit):
+            label.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+            )
+        else:
+            label.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
+            label.setSizePolicy(
+                QSizePolicy.Policy.Preferred,
+                QSizePolicy.Policy.Expanding,
+            )
         form.addRow(label, field)
 
     @staticmethod
@@ -282,7 +343,7 @@ class EnterpriseSettingsDialog(QDialog):
         self.max_messages.setToolTip(
             "先快速同步邮件列表，点击邮件时再加载正文；0 表示不限制列表数量。"
         )
-        self.include_special = QCheckBox("同时扫描垃圾邮件与已删除邮件")
+        self.include_special = QCheckBox("扫描垃圾邮件与已删除邮件")
         self.include_special.setChecked(bool(values.get("include_special", False)))
         self.save_eml = QCheckBox("保存每封邮件的 EML 原件（会明显增加磁盘占用）")
         self.save_eml.setChecked(bool(values.get("save_eml", False)))
@@ -451,37 +512,76 @@ class EnterpriseSettingsDialog(QDialog):
         hint.setWordWrap(True)
         self._add_row(behavior_form, "优先级", hint)
 
+        layout.addStretch(1)
+        return page
+
+    def _close_behavior_page(self, values: dict[str, object]) -> QScrollArea:
+        page, layout = self._new_page(
+            "关闭与托盘",
+            "随时修改主窗口关闭按钮的行为；新的选择会覆盖之前记住的操作。",
+        )
         close_form = self._add_card(
             layout,
-            "关闭窗口",
-            "决定点击主窗口关闭按钮时，是保留后台任务还是完全退出。",
+            "点击关闭按钮时",
+            "“每次询问”会恢复关闭确认窗口；后台仍有任务时建议使用系统托盘。",
         )
         self.close_action = QComboBox()
-        self.close_action.addItem("每次询问", CLOSE_ACTION_ASK)
+        self.close_action.setAccessibleName("主窗口关闭按钮操作")
+        self.close_action.addItem("每次询问（推荐）", CLOSE_ACTION_ASK)
         self.close_action.addItem("最小化到系统托盘", CLOSE_ACTION_TRAY)
         self.close_action.addItem("直接退出应用", CLOSE_ACTION_EXIT)
         selected_close_action = str(values.get("close_action", CLOSE_ACTION_ASK))
         self.close_action.setCurrentIndex(
             max(0, self.close_action.findData(selected_close_action))
         )
-        self._add_row(close_form, "关闭按钮操作", self.close_action)
+        self.close_action_description = QLabel()
+        self.close_action_description.setObjectName("translationProviderLabel")
+        self.close_action_description.setWordWrap(True)
+        self._add_row(close_form, "默认操作", self.close_action)
+        self._add_row(close_form, "行为说明", self.close_action_description)
+        self.close_action.currentIndexChanged.connect(
+            self._sync_close_action_description
+        )
+        self._sync_close_action_description()
+
+        safety_form = self._add_card(
+            layout,
+            "任务与数据安全",
+            "修改关闭行为不会清除邮箱、邮件或设置，也不会更改开机启动配置。",
+        )
+        safety_hint = QLabel(
+            "选择“直接退出应用”时，正在运行的取件、翻译和更新任务会先安全停止。"
+        )
+        safety_hint.setObjectName("translationProviderLabel")
+        safety_hint.setWordWrap(True)
+        self._add_row(safety_form, "退出策略", safety_hint)
         layout.addStretch(1)
         return page
+
+    def _sync_close_action_description(self, *_args) -> None:
+        descriptions = {
+            CLOSE_ACTION_ASK: "每次点击关闭按钮时显示选择窗口，可临时选择托盘或退出。",
+            CLOSE_ACTION_TRAY: "关闭主窗口后继续在后台收件，可从系统托盘重新打开。",
+            CLOSE_ACTION_EXIT: "关闭主窗口并退出 MailDesk，所有后台任务会安全结束。",
+        }
+        action = str(self.close_action.currentData() or CLOSE_ACTION_ASK)
+        self.close_action_description.setText(
+            descriptions.get(action, descriptions[CLOSE_ACTION_ASK])
+        )
 
     def _appearance_page(self, values: dict[str, object]) -> QScrollArea:
         page, layout = self._new_page(
             "外观与字体",
-            "调整整个软件的文字大小、字重与字体，并统一浅色和深色界面的可读性。",
+            "选择界面主题，并调整整个软件的文字大小、字重与字体。",
         )
         appearance = normalized_appearance(values)
         theme_form = self._add_card(
             layout,
-            "界面主题",
-            "保存后立即应用到主窗口、设置、菜单、提示框和邮件阅读器工具区域。",
+            "主题设置",
+            "选择喜欢的界面主题；保存后会平滑应用到主窗口、菜单、提示框和邮件阅读器。",
         )
-        self.dark_theme = QCheckBox("启用深色模式")
-        self.dark_theme.setChecked(bool(appearance["dark_theme"]))
-        self._add_row(theme_form, "颜色模式", self.dark_theme)
+        self.theme_picker = ThemePicker(str(appearance["theme"]))
+        self._add_row(theme_form, "主题风格", self.theme_picker)
 
         font_form = self._add_card(
             layout,
@@ -541,9 +641,85 @@ class EnterpriseSettingsDialog(QDialog):
         layout.addStretch(1)
         return page
 
+    def _confirm_reset_to_defaults(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "恢复默认设置",
+            "将当前窗口中的软件设置恢复为默认值。\n\n"
+            "邮箱账号、已收邮件、代理、Webhook 和自动化规则不会被删除；"
+            "点击“保存设置”后才会生效。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._reset_to_defaults()
+
+    def _reset_to_defaults(self) -> None:
+        self.folders.setText("INBOX")
+        self.max_messages.setValue(0)
+        self.include_special.setChecked(False)
+        self.save_eml.setChecked(False)
+        self.extract_keywords.setPlainText("\n".join(FetchRequest().keywords))
+        self.extract_pattern.clear()
+        self.post_action.setCurrentIndex(
+            max(0, self.post_action.findData(PostAction.NONE.value))
+        )
+        self.action_target.clear()
+        self.confirm_actions.setChecked(False)
+        self.schedule_enabled.setChecked(False)
+        self.schedule_interval.setValue(5)
+        self.interval_min.setValue(0)
+        self.interval_max.setValue(0)
+        self.ip_concurrency.setValue(2)
+        self.proxy_fetch_enabled.setChecked(False)
+        self.proxy_type.setCurrentIndex(
+            max(0, self.proxy_type.findData(ProxyType.HTTP.value))
+        )
+        self.proxy_text.clear()
+        self.webhook_name.clear()
+        self.webhook_url.clear()
+        self.webhook_secret.clear()
+        self.webhook_hosts.clear()
+        self.rule_name.clear()
+        self.rule_pattern.clear()
+        self.rule_action.setCurrentIndex(
+            max(0, self.rule_action.findData(PostAction.NONE.value))
+        )
+        self.rule_target.clear()
+        self.rule_webhook.setCurrentIndex(max(0, self.rule_webhook.findData(None)))
+        self.rule_forward.clear()
+        self.translation_language.setCurrentIndex(
+            max(
+                0,
+                self.translation_language.findData(DEFAULT_TRANSLATION_LANGUAGE),
+            )
+        )
+        self.translation_confirm.setChecked(True)
+        self.theme_picker.set_current_theme(DEFAULT_THEME)
+        self.font_family.setCurrentIndex(max(0, self.font_family.findData("")))
+        self.font_size.setValue(DEFAULT_FONT_SIZE)
+        self.font_weight.setCurrentIndex(
+            max(0, self.font_weight.findData(DEFAULT_FONT_WEIGHT))
+        )
+        defaults = configured_quick_action_ids(None)
+        for combo, action_id in zip(
+            self.dashboard_quick_action_boxes,
+            defaults,
+            strict=True,
+        ):
+            combo.setCurrentIndex(max(0, combo.findData(action_id)))
+        self.close_action.setCurrentIndex(
+            max(0, self.close_action.findData(CLOSE_ACTION_ASK))
+        )
+        self._sync_post_action_controls()
+        self._sync_schedule_controls()
+        self._update_font_preview()
+        self.footer_hint.setText("已恢复默认值，点击“保存设置”后生效")
+
     def _update_font_preview(self, *_args) -> None:
         family = str(self.font_family.currentData() or self.font().family())
-        font = QFont(family)
+        font = QFont(self.font())
+        font.setFamily(family)
         font.setPointSize(self.font_size.value())
         font.setWeight(QFont.Weight(int(self.font_weight.currentData())))
         self.font_preview.setFont(font)
@@ -572,7 +748,9 @@ class EnterpriseSettingsDialog(QDialog):
             "添加单个代理",
             "适合逐个填写名称、类型、主机、端口和认证信息；保存后立即加入代理池。",
         )
-        single_row = QWidget()
+        single_row = QFrame()
+        single_row.setObjectName("settingsInlineAction")
+        self.proxy_management_row = single_row
         single_layout = QHBoxLayout(single_row)
         single_layout.setContentsMargins(0, 0, 0, 0)
         self.proxy_count_label = QLabel(
@@ -623,12 +801,23 @@ class EnterpriseSettingsDialog(QDialog):
         version = QLabel(f"MailDesk v{__version__} · 正式更新通道")
         version.setObjectName("translationProviderLabel")
         version.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        update_row = QFrame()
+        update_row.setObjectName("settingsInlineAction")
+        update_layout = QHBoxLayout(update_row)
+        update_layout.setContentsMargins(0, 0, 0, 0)
+        update_layout.setSpacing(12)
+        self.update_status_label = QLabel("尚未检查更新")
+        self.update_status_label.setObjectName("settingsUpdateStatus")
+        self.update_status_label.setWordWrap(True)
+        self.update_status_label.setProperty("state", "idle")
+        update_layout.addWidget(self.update_status_label, 1)
         self.update_check_button = QPushButton("检查系统更新")
         self.update_check_button.setObjectName("primaryButton")
         self.update_check_button.setIcon(line_icon("refresh", "#ffffff", 16))
-        self.update_check_button.clicked.connect(self.updateCheckRequested.emit)
+        self.update_check_button.clicked.connect(self._request_update_check)
+        update_layout.addWidget(self.update_check_button)
         self._add_row(update_form, "当前版本", version)
-        self._add_row(update_form, "更新操作", self.update_check_button)
+        self._add_row(update_form, "更新操作", update_row)
         security_form = self._add_card(
             layout,
             "安全校验",
@@ -640,6 +829,32 @@ class EnterpriseSettingsDialog(QDialog):
         self._add_row(security_form, "更新策略", security)
         layout.addStretch(1)
         return page
+
+    def _request_update_check(self) -> None:
+        self.set_update_status("checking", "正在连接 GitHub 检查正式版本…")
+        self.updateCheckRequested.emit()
+
+    def set_update_status(self, state: str, message: str) -> None:
+        """Update the inline checker without closing or accepting the dialog."""
+
+        normalized = state if state in {
+            "idle",
+            "checking",
+            "current",
+            "available",
+            "downloading",
+            "error",
+            "unavailable",
+        } else "idle"
+        self.update_status_label.setProperty("state", normalized)
+        self.update_status_label.setText(message)
+        busy = normalized == "checking"
+        self.update_check_button.setEnabled(
+            not busy and normalized != "unavailable"
+        )
+        self.update_check_button.setText("正在检查…" if busy else "检查系统更新")
+        self.update_status_label.style().unpolish(self.update_status_label)
+        self.update_status_label.style().polish(self.update_status_label)
 
     def _webhook_page(self) -> QScrollArea:
         page, layout = self._new_page(
@@ -893,7 +1108,8 @@ class EnterpriseSettingsDialog(QDialog):
             "rule_forward": self.rule_forward.text().strip().casefold(),
             "translation_language": self.translation_language.currentData(),
             "translation_confirm": self.translation_confirm.isChecked(),
-            "dark_theme": self.dark_theme.isChecked(),
+            "theme": self.theme_picker.current_theme(),
+            "dark_theme": THEME_BY_ID[self.theme_picker.current_theme()].dark,
             "font_family": str(self.font_family.currentData() or ""),
             "font_size": self.font_size.value(),
             "font_weight": int(self.font_weight.currentData() or DEFAULT_FONT_WEIGHT),

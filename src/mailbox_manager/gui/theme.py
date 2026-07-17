@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import re
+
+from mailbox_manager.gui.appearance import DEFAULT_THEME, THEME_BY_ID
+
 LIGHT_THEME = """
 QMainWindow, QDialog, QWidget {
     background: #f4f7fb;
@@ -307,7 +311,7 @@ QPushButton#primaryButton {
     color: #ffffff;
     border-color: #2563eb;
     font-weight: 600;
-    padding: 8px 18px;
+    padding: 7px 18px;
 }
 QPushButton#primaryButton:hover { background: #1d4ed8; border-color: #1d4ed8; }
 QPushButton#ghostButton {
@@ -467,6 +471,10 @@ QTabWidget::pane {
     top: -1px;
 }
 QTabWidget#messageTabs::pane { background: #ffffff; border: 0; }
+QTabWidget#messageTabs > QTabBar::base {
+    background: transparent;
+    border: 0;
+}
 QTabBar::tab {
     background: transparent;
     color: #64748b;
@@ -553,8 +561,8 @@ QFrame#settingsSidebar {
     border-right: 1px solid #e2e8f0;
 }
 QLabel#settingsNavCaption {
-    color: #94a3b8;
-    font-size: 10px;
+    color: #5f6f82;
+    font-size: 11px;
     font-weight: 700;
     padding: 0 8px;
 }
@@ -568,6 +576,7 @@ QListWidget#settingsNavigation::item {
     border-radius: 8px;
     min-height: 38px;
     padding: 1px 11px;
+    font-weight: 500;
 }
 QListWidget#settingsNavigation::item:hover { background: #eef2f7; }
 QListWidget#settingsNavigation::item:selected {
@@ -577,10 +586,11 @@ QListWidget#settingsNavigation::item:selected {
 }
 QLabel#settingsPrivacyHint {
     background: #eef2ff;
-    color: #6366f1;
+    color: #4f46e5;
     border-radius: 8px;
     padding: 10px;
-    font-size: 10px;
+    font-size: 11px;
+    font-weight: 500;
 }
 QStackedWidget#settingsPages, QScrollArea#settingsScroll,
 QWidget#settingsPage {
@@ -607,6 +617,19 @@ QLabel#settingsFieldLabel {
     font-size: 11px;
     font-weight: 600;
 }
+QFrame#settingsInlineAction {
+    background: transparent;
+    border: 0;
+}
+QLabel#settingsUpdateStatus {
+    background: transparent;
+    color: #64748b;
+}
+QLabel#settingsUpdateStatus[state="checking"] { color: #2563eb; }
+QLabel#settingsUpdateStatus[state="current"] { color: #15803d; }
+QLabel#settingsUpdateStatus[state="available"] { color: #1d4ed8; font-weight: 600; }
+QLabel#settingsUpdateStatus[state="error"],
+QLabel#settingsUpdateStatus[state="unavailable"] { color: #b91c1c; }
 QDialog#settingsDialog QSpinBox { min-width: 150px; max-width: 220px; }
 QDialog#settingsDialog QSpinBox::up-button,
 QDialog#settingsDialog QSpinBox::down-button {
@@ -626,7 +649,7 @@ QDialog#settingsDialog QCheckBox {
     color: #334155;
     spacing: 8px;
 }
-QDialog#settingsDialog QCheckBox::indicator { width: 16px; height: 16px; }
+QDialog#settingsDialog QCheckBox::indicator { width: 18px; height: 18px; }
 QPlainTextEdit#settingsTextArea {
     background: #fbfdff;
     font-family: "Cascadia Mono", "Consolas";
@@ -1094,6 +1117,141 @@ QScrollBar::handle:vertical {
 }
 QScrollBar::handle:vertical:hover { background: #94a3b8; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+
+/* Unified workspace and dialog polish. */
+QWidget#accountPanel, QWidget#detailsPanel {
+    background: #f6f8fb;
+}
+QFrame#accountCommandBar, QFrame#detailCommandBar {
+    background: transparent;
+    border: 0;
+}
+QFrame#accountFilterBar {
+    background: #ffffff;
+    border: 1px solid #e3e8ef;
+    border-radius: 10px;
+}
+QFrame#accountFilterBar QLineEdit,
+QFrame#accountFilterBar QComboBox,
+QFrame#accountFilterBar QPushButton {
+    min-height: 20px;
+}
+QToolBar#mainToolbar[compact="true"] { padding: 5px 8px; spacing: 2px; }
+QLabel#translationProviderLabel {
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 600;
+}
+QTextBrowser#emailBodyTextView {
+    background: #ffffff;
+    color: #172033;
+    border: 0;
+    padding: 10px;
+}
+QTabWidget#mainTabs > QTabBar::tab:selected {
+    background: #ffffff;
+    border-color: transparent;
+    border-bottom-color: #2563eb;
+}
+QMainWindow#mainWindow, QDialog#addAccountDialog,
+QDialog#contentFilterDialog, QDialog#importPreviewDialog,
+QDialog#mailViewerDialog { background: #f6f8fb; }
+QToolButton#importMenuButton, QToolButton#toolbarMoreButton,
+QToolButton#toolsMenuButton, QToolButton#themeToolButton,
+QToolButton#settingsToolButton { border-radius: 8px; }
+QSplitter#workspaceSplitter, QSplitter#contentSplitter,
+QSplitter#messageSplitter, QSplitter#mailViewerSplitter {
+    background: transparent;
+}
+QStackedWidget#accountStack { background: #ffffff; border-radius: 9px; }
+QWidget#messageBodyTab { background: #ffffff; }
+QLineEdit#messageSearchInput, QLineEdit#mailViewerSearch,
+QLineEdit#contentFilterQuery { min-height: 22px; }
+QComboBox#messageSearchScope, QComboBox#contentFilterMode,
+QComboBox#contentFilterScope { min-height: 22px; }
+QTabWidget#mailViewerFolders::pane {
+    background: #ffffff;
+    border: 1px solid #e3e8ef;
+    border-radius: 9px;
+}
+QFrame#mailViewerMessageHeader, QFrame#composeRecipientsCard {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+}
+QLabel#mailViewerHeaderIcon, QLabel#composeHeaderIcon,
+QLabel#closeOptionIcon {
+    background: #eff6ff;
+    border-radius: 10px;
+}
+QCheckBox, QRadioButton {
+    background: transparent;
+    color: #334155;
+    spacing: 8px;
+}
+QCheckBox#composeConfirmation {
+    background: #eff6ff;
+    color: #1e40af;
+    border: 1px solid #bfdbfe;
+    border-radius: 9px;
+    padding: 10px 12px;
+}
+QFrame#utilityDialogHeader {
+    background: #ffffff;
+    border: 0;
+    border-bottom: 1px solid #e2e8f0;
+}
+QLabel#utilityDialogIcon {
+    background: #eaf2ff;
+    border-radius: 11px;
+}
+QLabel#utilityDialogTitle {
+    color: #0f172a;
+    font-size: 19px;
+    font-weight: 700;
+}
+QLabel#utilityDialogSubtitle, QLabel#utilityDialogFooterHint,
+QLabel#filterGuidance { color: #718096; font-size: 11px; }
+QWidget#utilityDialogContent { background: #f6f8fb; }
+QLabel#utilitySectionTitle {
+    color: #1e293b;
+    font-size: 13px;
+    font-weight: 700;
+}
+QLabel#utilityResultBadge {
+    background: #ecfdf5;
+    color: #047857;
+    border-radius: 9px;
+    padding: 4px 9px;
+    font-size: 11px;
+    font-weight: 600;
+}
+QFrame#filterControlCard {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 11px;
+}
+QFrame#filterResultBar { background: transparent; border: 0; }
+QFrame#utilityDialogFooter {
+    background: #ffffff;
+    border: 0;
+    border-top: 1px solid #e2e8f0;
+}
+/* Press feedback is immediate; high-frequency controls intentionally do not animate. */
+QPushButton:focus { border-color: #60a5fa; }
+QToolButton:focus { border: 1px solid #93c5fd; }
+QPushButton#primaryButton:pressed { background: #1e40af; border-color: #1e40af; }
+QPushButton#ghostButton:pressed { background: #e2e8f0; color: #334155; }
+QPushButton#dangerButton:pressed { background: #fee2e2; border-color: #f87171; }
+QToolButton#primaryToolButton:pressed { background: #1e40af; border-color: #1e40af; }
+QToolButton#addAccountToolButton:pressed { background: #dbeafe; border-color: #60a5fa; }
+QToolButton#dashboardQuickAction:pressed { background: #dbeafe; border-color: #93c5fd; }
+QToolButton#dashboardMetricAction:pressed { background: #dbeafe; }
+QToolButton#updateCloseButton:pressed { background: #e2e8f0; }
+QPushButton#attachmentActionButton:pressed { background: #e2e8f0; border-color: #94a3b8; }
+QPushButton#closeDialogDismiss:pressed { background: #e2e8f0; }
+QPushButton#closeTrayOption:pressed { background: #dbeafe; border-color: #60a5fa; }
+QPushButton#closeExitOption:pressed { background: #fee2e2; border-color: #f87171; }
 """
 
 
@@ -1387,7 +1545,7 @@ QPushButton#primaryButton {
     color: #ffffff;
     border-color: #3b82f6;
     font-weight: 600;
-    padding: 8px 18px;
+    padding: 7px 18px;
 }
 QPushButton#primaryButton:hover { background: #2563eb; border-color: #2563eb; }
 QPushButton#ghostButton {
@@ -1543,6 +1701,10 @@ QTabWidget::pane {
     top: -1px;
 }
 QTabWidget#messageTabs::pane { background: #151d2a; border: 0; }
+QTabWidget#messageTabs > QTabBar::base {
+    background: transparent;
+    border: 0;
+}
 QTabBar::tab {
     background: transparent;
     color: #8c99ad;
@@ -1629,8 +1791,8 @@ QFrame#settingsSidebar {
     border-right: 1px solid #273244;
 }
 QLabel#settingsNavCaption {
-    color: #69768a;
-    font-size: 10px;
+    color: #94a3b8;
+    font-size: 11px;
     font-weight: 700;
     padding: 0 8px;
 }
@@ -1644,6 +1806,7 @@ QListWidget#settingsNavigation::item {
     border-radius: 8px;
     min-height: 38px;
     padding: 1px 11px;
+    font-weight: 500;
 }
 QListWidget#settingsNavigation::item:hover { background: #1c2737; }
 QListWidget#settingsNavigation::item:selected {
@@ -1656,7 +1819,8 @@ QLabel#settingsPrivacyHint {
     color: #a5b4fc;
     border-radius: 8px;
     padding: 10px;
-    font-size: 10px;
+    font-size: 11px;
+    font-weight: 500;
 }
 QStackedWidget#settingsPages, QScrollArea#settingsScroll,
 QWidget#settingsPage {
@@ -1683,6 +1847,19 @@ QLabel#settingsFieldLabel {
     font-size: 11px;
     font-weight: 600;
 }
+QFrame#settingsInlineAction {
+    background: transparent;
+    border: 0;
+}
+QLabel#settingsUpdateStatus {
+    background: transparent;
+    color: #94a3b8;
+}
+QLabel#settingsUpdateStatus[state="checking"] { color: #93c5fd; }
+QLabel#settingsUpdateStatus[state="current"] { color: #86efac; }
+QLabel#settingsUpdateStatus[state="available"] { color: #bfdbfe; font-weight: 600; }
+QLabel#settingsUpdateStatus[state="error"],
+QLabel#settingsUpdateStatus[state="unavailable"] { color: #fca5a5; }
 QDialog#settingsDialog QSpinBox { min-width: 150px; max-width: 220px; }
 QDialog#settingsDialog QSpinBox::up-button,
 QDialog#settingsDialog QSpinBox::down-button {
@@ -1702,7 +1879,7 @@ QDialog#settingsDialog QCheckBox {
     color: #d5dce7;
     spacing: 8px;
 }
-QDialog#settingsDialog QCheckBox::indicator { width: 16px; height: 16px; }
+QDialog#settingsDialog QCheckBox::indicator { width: 18px; height: 18px; }
 QPlainTextEdit#settingsTextArea {
     background: #121a26;
     font-family: "Cascadia Mono", "Consolas";
@@ -1885,7 +2062,7 @@ QListWidget#mailReaderList::item:selected {
     border: 2px solid #60a5fa;
 }
 QTextBrowser#mailViewerBody, EmailBodyView#mailViewerBody {
-    background: #ffffff; border: 0; padding: 0;
+    background: #111925; color: #e5eaf2; border: 0; padding: 0;
 }
 QFrame#mailAttachmentPanel, QFrame#composeAttachmentCard, QFrame#composeSenderCard {
     background: #151d2a;
@@ -2167,4 +2344,238 @@ QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
 QScrollBar::handle:vertical { background: #3a475c; border-radius: 4px; min-height: 28px; }
 QScrollBar::handle:vertical:hover { background: #526177; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+
+/* Unified workspace and dialog polish. */
+QWidget#accountPanel, QWidget#detailsPanel {
+    background: #0f1520;
+}
+QFrame#accountCommandBar, QFrame#detailCommandBar {
+    background: transparent;
+    border: 0;
+}
+QFrame#accountFilterBar {
+    background: #151d2a;
+    border: 1px solid #2b374a;
+    border-radius: 10px;
+}
+QFrame#accountFilterBar QLineEdit,
+QFrame#accountFilterBar QComboBox,
+QFrame#accountFilterBar QPushButton {
+    min-height: 20px;
+}
+QToolBar#mainToolbar[compact="true"] { padding: 5px 8px; spacing: 2px; }
+QLabel#translationProviderLabel {
+    color: #aeb9c9;
+    font-size: 11px;
+    font-weight: 600;
+}
+QTextBrowser#emailBodyTextView {
+    background: #151d2a;
+    color: #e5eaf2;
+    border: 0;
+    padding: 10px;
+}
+QTabWidget#mainTabs > QTabBar::tab:selected {
+    background: #151d2a;
+    border-color: transparent;
+    border-bottom-color: #60a5fa;
+}
+QMainWindow#mainWindow, QDialog#addAccountDialog,
+QDialog#contentFilterDialog, QDialog#importPreviewDialog,
+QDialog#mailViewerDialog { background: #0f1520; }
+QToolButton#importMenuButton, QToolButton#toolbarMoreButton,
+QToolButton#toolsMenuButton, QToolButton#themeToolButton,
+QToolButton#settingsToolButton { border-radius: 8px; }
+QSplitter#workspaceSplitter, QSplitter#contentSplitter,
+QSplitter#messageSplitter, QSplitter#mailViewerSplitter {
+    background: transparent;
+}
+QStackedWidget#accountStack { background: #151d2a; border-radius: 9px; }
+QWidget#messageBodyTab { background: #151d2a; }
+QLineEdit#messageSearchInput, QLineEdit#mailViewerSearch,
+QLineEdit#contentFilterQuery { min-height: 22px; }
+QComboBox#messageSearchScope, QComboBox#contentFilterMode,
+QComboBox#contentFilterScope { min-height: 22px; }
+QTabWidget#mailViewerFolders::pane {
+    background: #151d2a;
+    border: 1px solid #2b374a;
+    border-radius: 9px;
+}
+QFrame#mailViewerMessageHeader, QFrame#composeRecipientsCard {
+    background: #151d2a;
+    border: 1px solid #2b374a;
+    border-radius: 10px;
+}
+QLabel#mailViewerHeaderIcon, QLabel#composeHeaderIcon,
+QLabel#closeOptionIcon {
+    background: #18345e;
+    border-radius: 10px;
+}
+QCheckBox, QRadioButton {
+    background: transparent;
+    color: #d5dce7;
+    spacing: 8px;
+}
+QCheckBox#composeConfirmation {
+    background: #172a44;
+    color: #bfdbfe;
+    border: 1px solid #294f79;
+    border-radius: 9px;
+    padding: 10px 12px;
+}
+QFrame#utilityDialogHeader {
+    background: #151d2a;
+    border: 0;
+    border-bottom: 1px solid #273244;
+}
+QLabel#utilityDialogIcon {
+    background: #18345e;
+    border-radius: 11px;
+}
+QLabel#utilityDialogTitle {
+    color: #f8fafc;
+    font-size: 19px;
+    font-weight: 700;
+}
+QLabel#utilityDialogSubtitle, QLabel#utilityDialogFooterHint,
+QLabel#filterGuidance { color: #8c99ad; font-size: 11px; }
+QWidget#utilityDialogContent { background: #0f1520; }
+QLabel#utilitySectionTitle {
+    color: #e5eaf2;
+    font-size: 13px;
+    font-weight: 700;
+}
+QLabel#utilityResultBadge {
+    background: #123b32;
+    color: #6ee7b7;
+    border-radius: 9px;
+    padding: 4px 9px;
+    font-size: 11px;
+    font-weight: 600;
+}
+QFrame#filterControlCard {
+    background: #151d2a;
+    border: 1px solid #2b374a;
+    border-radius: 11px;
+}
+QFrame#filterResultBar { background: transparent; border: 0; }
+QFrame#utilityDialogFooter {
+    background: #151d2a;
+    border: 0;
+    border-top: 1px solid #273244;
+}
+/* Press feedback is immediate; high-frequency controls intentionally do not animate. */
+QPushButton:focus { border-color: #60a5fa; }
+QToolButton:focus { border: 1px solid #3b82f6; }
+QPushButton#primaryButton:pressed { background: #1d4ed8; border-color: #1d4ed8; }
+QPushButton#ghostButton:pressed { background: #29364a; color: #e5eaf2; }
+QPushButton#dangerButton:pressed { background: #4a2430; border-color: #ef4444; }
+QToolButton#primaryToolButton:pressed { background: #1d4ed8; border-color: #1d4ed8; }
+QToolButton#addAccountToolButton:pressed { background: #1f3a60; border-color: #60a5fa; }
+QToolButton#dashboardQuickAction:pressed { background: #1f3a60; border-color: #3b82f6; }
+QToolButton#dashboardMetricAction:pressed { background: #243349; }
+QToolButton#updateCloseButton:pressed { background: #29364a; }
+QPushButton#attachmentActionButton:pressed { background: #29364a; border-color: #526177; }
+QPushButton#closeDialogDismiss:pressed { background: #29364a; }
+QPushButton#closeTrayOption:pressed { background: #1f3a60; border-color: #3b82f6; }
+QPushButton#closeExitOption:pressed { background: #4a2430; border-color: #ef4444; }
 """
+
+
+_HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
+
+
+def _replace_theme_colors(source: str, replacements: dict[str, str]) -> str:
+    return _HEX_COLOR.sub(
+        lambda match: replacements.get(match.group(0).casefold(), match.group(0)),
+        source,
+    )
+
+
+def _light_theme_replacements(theme_id: str) -> dict[str, str]:
+    theme = THEME_BY_ID[theme_id]
+    return {
+        "#ffffff": theme.surface,
+        "#fbfdff": theme.surface,
+        "#f8fafc": theme.panel,
+        "#f4f7fb": theme.window,
+        "#f1f5f9": theme.panel,
+        "#eef2f7": theme.panel,
+        "#edf1f6": theme.panel,
+        "#e2e8f0": theme.border,
+        "#e1e7ef": theme.border,
+        "#dfe7f1": theme.border,
+        "#dce3ec": theme.border,
+        "#d8e0eb": theme.border,
+        "#cbd5e1": theme.border,
+        "#0f172a": theme.text,
+        "#172033": theme.text,
+        "#273449": theme.text,
+        "#334155": theme.text,
+        "#475569": theme.muted,
+        "#64748b": theme.muted,
+        "#718096": theme.muted,
+        "#94a3b8": theme.muted,
+        "#1d4ed8": theme.accent,
+        "#2563eb": theme.accent,
+        "#1e40af": theme.accent,
+        "#3b82f6": theme.accent,
+        "#60a5fa": theme.accent,
+        "#93c5fd": theme.accent_soft,
+        "#bfdbfe": theme.accent_soft,
+        "#dbeafe": theme.accent_soft,
+        "#eaf2ff": theme.accent_soft,
+        "#eff6ff": theme.accent_soft,
+    }
+
+
+def _dark_theme_replacements(theme_id: str) -> dict[str, str]:
+    theme = THEME_BY_ID[theme_id]
+    return {
+        "#0f1520": theme.window,
+        "#101722": theme.window,
+        "#111925": theme.window,
+        "#121a26": theme.window,
+        "#151d2a": theme.surface,
+        "#172130": theme.surface,
+        "#192332": theme.panel,
+        "#1c2737": theme.panel,
+        "#202b3b": theme.panel,
+        "#222e40": theme.panel,
+        "#273244": theme.border,
+        "#29364a": theme.border,
+        "#2b374a": theme.border,
+        "#334156": theme.border,
+        "#344258": theme.border,
+        "#e5eaf2": theme.text,
+        "#e8edf5": theme.text,
+        "#f8fafc": theme.text,
+        "#ffffff": theme.text,
+        "#8c99ad": theme.muted,
+        "#aeb9c9": theme.muted,
+        "#566277": theme.muted,
+        "#526177": theme.muted,
+        "#2563eb": theme.accent,
+        "#3b82f6": theme.accent,
+        "#60a5fa": theme.accent,
+        "#93c5fd": theme.accent,
+        "#bfdbfe": theme.accent,
+        "#18345e": theme.accent_soft,
+        "#1d3b68": theme.accent_soft,
+        "#172a44": theme.accent_soft,
+        "#1f3a60": theme.accent_soft,
+    }
+
+
+def theme_stylesheet(theme_id: str) -> str:
+    """Return a complete stylesheet for one of the built-in visual themes."""
+
+    normalized = theme_id if theme_id in THEME_BY_ID else DEFAULT_THEME
+    definition = THEME_BY_ID[normalized]
+    source = DARK_THEME if definition.dark else LIGHT_THEME
+    replacements = (
+        _dark_theme_replacements(normalized)
+        if definition.dark
+        else _light_theme_replacements(normalized)
+    )
+    return _replace_theme_colors(source, replacements)

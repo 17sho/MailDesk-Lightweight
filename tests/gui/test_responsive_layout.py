@@ -5,8 +5,8 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QPoint, QRect, QSize
-from PySide6.QtWidgets import QWidget
+from PySide6.QtCore import QPoint, QRect, QSize, Qt
+from PySide6.QtWidgets import QApplication, QTabWidget, QWidget
 
 from mailbox_manager.domain.models import EmailAccount, ProtocolType
 from mailbox_manager.gui.main_window import MainWindow
@@ -92,6 +92,7 @@ def test_main_window_keeps_toolbar_and_account_workspace_usable(
 
     compact = window_size.width() < 1320
     assert window.toolbar_more_button.isVisibleTo(window) is compact
+    assert window._workspace_compact is compact
     if compact:
         assert window.toolbar_more_button.objectName() == "toolbarMoreButton"
         _assert_fully_inside(window.toolbar_more_button, window)
@@ -103,6 +104,8 @@ def test_main_window_keeps_toolbar_and_account_workspace_usable(
             window.paste_import_action,
             window.export_action,
             window.compose_action,
+            window.theme_action,
+            window.settings_action,
         }.issubset(overflow_actions)
     else:
         assert window.import_menu_button.isVisibleTo(window) is True
@@ -134,6 +137,74 @@ def test_main_window_keeps_toolbar_and_account_workspace_usable(
     assert window.message_list.viewport().height() >= 70
     assert window.message_body.width() >= 250
     assert window.message_body.height() >= 80
+    message_tabs = window.findChild(QTabWidget, "messageTabs")
+    assert message_tabs is not None
+    assert message_tabs.tabBar().drawBase() is False
+
+
+def test_large_font_reflows_top_toolbar_before_controls_are_clipped(
+    qtbot, tmp_path
+) -> None:
+    application = QApplication.instance()
+    assert application is not None
+    previous_font = application.font()
+    window = _window(qtbot, tmp_path)
+    window.resize(1440, 760)
+    window.show()
+    _settle(qtbot)
+    try:
+        window._apply_appearance_preferences(
+            {
+                "theme": "grass_gray",
+                "font_family": "",
+                "font_size": 18,
+                "font_weight": 600,
+            },
+            persist=False,
+        )
+        window.resize(1400, 760)
+        _settle(qtbot)
+
+        assert window._toolbar_compact is True
+        for control in (
+            window.toolbar_more_button,
+            window.tools_menu_button,
+            window.theme_tool_button,
+            window.settings_tool_button,
+        ):
+            _assert_fully_inside(control, window)
+        assert window.settings_tool_button.toolButtonStyle() is (
+            Qt.ToolButtonStyle.ToolButtonIconOnly
+        )
+
+        window.resize(1080, 760)
+        _settle(qtbot)
+        for control in (
+            window.toolbar_more_button,
+            window.concurrency_box,
+            window.tools_menu_button,
+            window.theme_tool_button,
+            window.settings_tool_button,
+        ):
+            _assert_fully_inside(control, window)
+
+        window.resize(2300, 760)
+        _settle(qtbot)
+        assert window._toolbar_compact is False
+        for control in (
+            window.add_account_tool_button,
+            window.import_menu_button,
+            window.export_tool_button,
+            window.compose_tool_button,
+            window.start_tool_button,
+            window.stop_tool_button,
+            window.tools_menu_button,
+            window.settings_tool_button,
+        ):
+            _assert_fully_inside(control, window)
+            assert control.font().weight() >= 600
+    finally:
+        application.setFont(previous_font)
 
 
 def test_dashboard_tab_return_and_resize_restore_both_scroll_origins(

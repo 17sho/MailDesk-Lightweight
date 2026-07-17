@@ -2,17 +2,20 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QPoint, Qt, QTimer, QVariantAnimation
 from PySide6.QtWidgets import (
     QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QWidget,
 )
 
 from mailbox_manager.gui.icons import line_icon
+from mailbox_manager.gui.motion import (
+    FadeSlideEffect,
+    ease_out_curve,
+    reduced_motion_enabled,
+)
 
 
 class BottomToast(QFrame):
@@ -41,20 +44,41 @@ class BottomToast(QFrame):
         self.icon_label.setFixedSize(22, 22)
         self.message_label = QLabel()
         self.message_label.setObjectName("bottomToastText")
+        self.message_label.setWordWrap(True)
         self.message_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         layout.addWidget(self.icon_label)
         layout.addWidget(self.message_label, 1)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(28)
-        shadow.setOffset(0, 7)
-        shadow.setColor(QColor(15, 23, 42, 80))
-        self.setGraphicsEffect(shadow)
-
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
-        self._hide_timer.timeout.connect(self.hide)
+        self._hide_timer.timeout.connect(self.dismiss)
+        self._motion_effect = FadeSlideEffect(self)
+        self.setGraphicsEffect(self._motion_effect)
+        self._motion_animation = QVariantAnimation(self)
+        self._motion_animation.setEasingCurve(ease_out_curve())
+        self._motion_animation.valueChanged.connect(self._motion_value_changed)
+        self._motion_animation.finished.connect(self._motion_finished)
+        self._motion_progress = 0.0
+        self._motion_target = 0.0
+        self._motion_duration = 0
+        self._base_position = QPoint()
         self.hide()
+
+    @property
+    def motion_progress(self) -> float:
+        return self._motion_progress
+
+    @property
+    def motion_target(self) -> float:
+        return self._motion_target
+
+    @property
+    def motion_duration(self) -> int:
+        return self._motion_duration
+
+    @property
+    def base_position(self) -> QPoint:
+        return QPoint(self._base_position)
 
     def show_message(
         self,
@@ -76,10 +100,51 @@ class BottomToast(QFrame):
         if parent is not None:
             width = min(max(self.sizeHint().width(), 280), parent.width() - 48)
             self.resize(width, self.sizeHint().height())
+        was_visible = self.isVisible()
         self.reposition()
         self.show()
         self.raise_()
+        if was_visible:
+            self._motion_animation.stop()
+            self._motion_progress = 1.0
+            self._motion_target = 1.0
+            self._apply_motion_progress()
+        else:
+            self._motion_progress = 0.0
+            self._apply_motion_progress()
+            self._animate_to(1.0, 170)
         self._hide_timer.start(max(800, duration))
+
+    def dismiss(self) -> None:
+        self._hide_timer.stop()
+        if self.isVisible():
+            self._animate_to(0.0, 130)
+
+    def _animate_to(self, target: float, duration: int) -> None:
+        self._motion_animation.stop()
+        self._motion_target = max(0.0, min(1.0, target))
+        distance = abs(self._motion_target - self._motion_progress)
+        effective_duration = min(100, duration) if reduced_motion_enabled() else duration
+        self._motion_duration = max(1, round(effective_duration * distance))
+        self._motion_animation.setStartValue(self._motion_progress)
+        self._motion_animation.setEndValue(self._motion_target)
+        self._motion_animation.setDuration(self._motion_duration)
+        self._motion_animation.start()
+
+    def _motion_value_changed(self, value: object) -> None:
+        self._motion_progress = max(0.0, min(1.0, float(value)))
+        self._apply_motion_progress()
+
+    def _motion_finished(self) -> None:
+        self._motion_progress = self._motion_target
+        self._apply_motion_progress()
+        if self._motion_target == 0.0:
+            self.hide()
+
+    def _apply_motion_progress(self) -> None:
+        travel = 0 if reduced_motion_enabled() else 8
+        self._motion_effect.set_motion(self._motion_progress, travel)
+        self.move(self._base_position)
 
     def reposition(self) -> None:
         parent = self.parentWidget()
@@ -92,4 +157,5 @@ class BottomToast(QFrame):
             status_height = status_bar.height() if status_bar.isVisible() else 0
         x = max(16, (parent.width() - self.width()) // 2)
         y = max(16, parent.height() - status_height - self.height() - 18)
-        self.move(x, y)
+        self._base_position = QPoint(x, y)
+        self._apply_motion_progress()

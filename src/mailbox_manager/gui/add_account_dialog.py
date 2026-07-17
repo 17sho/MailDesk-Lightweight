@@ -112,10 +112,12 @@ class AddAccountDialog(QDialog):
         super().__init__(parent)
         self.setObjectName("addAccountDialog")
         self.setWindowTitle("MailDesk · 添加邮箱")
-        self.setMinimumSize(760, 560)
+        font_delta = max(0, self.font().pointSize() - 10)
+        minimum_width = min(980, 760 + font_delta * 25)
+        self.setMinimumSize(minimum_width, 560)
         available = self.screen().availableGeometry()
         self.resize(
-            min(980, max(760, available.width() - 100)),
+            min(1040, max(minimum_width, available.width() - 100)),
             min(720, max(560, available.height() - 100)),
         )
         self._account: EmailAccount | None = None
@@ -202,6 +204,7 @@ class AddAccountDialog(QDialog):
                 option.title,
             )
             item.setData(Qt.ItemDataRole.UserRole, option.key)
+            item.setToolTip(option.title)
             self.provider_list.addItem(item)
         layout.addWidget(self.provider_list, 1)
         hint = QLabel("密码、授权码和 Token\n将使用本机密钥加密保存")

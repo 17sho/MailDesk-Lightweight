@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from mailbox_manager.domain.models import EmailAccount
+from mailbox_manager.gui.icons import line_icon
 from mailbox_manager.services.send_service import OutgoingAttachment, OutgoingDraft
 
 
@@ -55,10 +56,18 @@ class ComposeDialog(QDialog):
         content_layout.setContentsMargins(24, 18, 24, 18)
         content_layout.setSpacing(10)
         content_layout.addWidget(self._build_sender_card())
-        self.to_input = self._field(content_layout, "收件人", "多个地址用逗号或分号分隔")
-        self.cc_input = self._field(content_layout, "抄送", "可选")
-        self.bcc_input = self._field(content_layout, "密送", "可选")
-        self.subject_input = self._field(content_layout, "主题", "邮件主题")
+        recipients_card = QFrame()
+        recipients_card.setObjectName("composeRecipientsCard")
+        recipients_layout = QVBoxLayout(recipients_card)
+        recipients_layout.setContentsMargins(14, 12, 14, 13)
+        recipients_layout.setSpacing(9)
+        self.to_input = self._field(
+            recipients_layout, "收件人", "多个地址用逗号或分号分隔"
+        )
+        self.cc_input = self._field(recipients_layout, "抄送", "可选")
+        self.bcc_input = self._field(recipients_layout, "密送", "可选")
+        self.subject_input = self._field(recipients_layout, "主题", "邮件主题")
+        content_layout.addWidget(recipients_card)
 
         body_label = QLabel("正文")
         body_label.setObjectName("composeFieldLabel")
@@ -93,6 +102,13 @@ class ComposeDialog(QDialog):
         header.setObjectName("composeHeader")
         layout = QHBoxLayout(header)
         layout.setContentsMargins(24, 18, 24, 16)
+        layout.setSpacing(13)
+        icon = QLabel()
+        icon.setObjectName("composeHeaderIcon")
+        icon.setFixedSize(42, 42)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setPixmap(line_icon("mail", "#2563eb", 21).pixmap(21, 21))
+        layout.addWidget(icon)
         copy = QVBoxLayout()
         copy.setSpacing(2)
         title = QLabel("批量发件" if len(self._accounts) > 1 else "写邮件")
@@ -103,6 +119,7 @@ class ComposeDialog(QDialog):
             else f"发件邮箱：{self._accounts[0].email}"
         )
         subtitle.setObjectName("composeSubtitle")
+        subtitle.setWordWrap(True)
         copy.addWidget(title)
         copy.addWidget(subtitle)
         layout.addLayout(copy)
@@ -133,7 +150,7 @@ class ComposeDialog(QDialog):
         row = QHBoxLayout()
         label = QLabel(label_text)
         label.setObjectName("composeFieldLabel")
-        label.setFixedWidth(58)
+        label.setMinimumWidth(68)
         editor = QLineEdit()
         editor.setPlaceholderText(placeholder)
         editor.setClearButtonEnabled(True)
@@ -172,6 +189,7 @@ class ComposeDialog(QDialog):
         layout.addWidget(self.attachment_list)
         hint = QLabel("单个附件不超过 20 MB，总计不超过 25 MB；Graph 账号总计不超过 3 MB")
         hint.setObjectName("composeHint")
+        hint.setWordWrap(True)
         layout.addWidget(hint)
         return card
 
@@ -182,6 +200,7 @@ class ComposeDialog(QDialog):
         layout.setContentsMargins(24, 13, 24, 13)
         hint = QLabel("发送任务将在后台执行，单个账号失败不会中断其他账号")
         hint.setObjectName("composeHint")
+        hint.setWordWrap(True)
         layout.addWidget(hint)
         layout.addStretch(1)
         buttons = QDialogButtonBox(

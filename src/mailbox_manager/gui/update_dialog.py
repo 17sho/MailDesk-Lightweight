@@ -2,16 +2,14 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from PySide6.QtCore import QEvent, QObject, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QMouseEvent
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QMouseEvent
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QTextBrowser,
     QToolButton,
@@ -20,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from mailbox_manager.gui.icons import line_icon
+from mailbox_manager.gui.motion import SmoothProgressBar
 
 
 class UpdateDialogState(StrEnum):
@@ -77,11 +76,6 @@ class UpdateDialog(QDialog):
 
         self.card = QFrame()
         self.card.setObjectName("updateCard")
-        shadow = QGraphicsDropShadowEffect(self.card)
-        shadow.setBlurRadius(36)
-        shadow.setOffset(0, 8)
-        shadow.setColor(QColor(15, 23, 42, 90))
-        self.card.setGraphicsEffect(shadow)
         card_layout = QVBoxLayout(self.card)
         card_layout.setContentsMargins(0, 0, 0, 0)
         card_layout.setSpacing(0)
@@ -128,7 +122,8 @@ class UpdateDialog(QDialog):
 
         self.close_button = QToolButton()
         self.close_button.setObjectName("updateCloseButton")
-        self.close_button.setText("×")
+        self.close_button.setIcon(line_icon("close", "#94a3b8", 18))
+        self.close_button.setIconSize(QSize(18, 18))
         self.close_button.setToolTip("稍后处理")
         self.close_button.setAccessibleName("关闭更新窗口")
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -147,8 +142,8 @@ class UpdateDialog(QDialog):
         self.version_badge = QLabel()
         self.version_badge.setObjectName("updateVersionBadge")
         self.version_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.version_badge.setFixedHeight(28)
-        self.version_badge.setMaximumWidth(130)
+        self.version_badge.setMinimumHeight(28)
+        self.version_badge.setMaximumWidth(180)
         layout.addWidget(self.version_badge)
 
         self.summary_label = QLabel()
@@ -193,7 +188,7 @@ class UpdateDialog(QDialog):
         progress_header.addWidget(self.progress_percent_label)
         progress_layout.addLayout(progress_header)
 
-        self.progress_bar = QProgressBar()
+        self.progress_bar = SmoothProgressBar()
         self.progress_bar.setObjectName("updateProgressBar")
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
@@ -270,13 +265,14 @@ class UpdateDialog(QDialog):
 
         safe_percent: int | None = None
         if percent is None:
+            self.progress_bar.stop_motion()
             self.progress_bar.setRange(0, 0)
             self.progress_percent_label.setText("准备中")
             self.primary_button.setText("正在准备下载")
         else:
             safe_percent = max(0, min(100, int(percent)))
             self.progress_bar.setRange(0, 100)
-            self.progress_bar.setValue(safe_percent)
+            self.progress_bar.set_animated_value(safe_percent)
             self.progress_percent_label.setText(f"{safe_percent}%")
             self.primary_button.setText(f"正在下载 {safe_percent}%")
 

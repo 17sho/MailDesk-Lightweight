@@ -32,6 +32,7 @@ from mailbox_manager.domain.models import (
     MailMessage,
 )
 from mailbox_manager.gui.email_body_view import EmailBodyView
+from mailbox_manager.gui.icons import line_icon
 from mailbox_manager.gui.workers import MessageLoadWorker, TranslationWorker
 from mailbox_manager.mail.display import (
     MessageDisplayContent,
@@ -107,15 +108,26 @@ class MailViewerDialog(QDialog):
         header.setObjectName("mailViewerHeader")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(20, 13, 14, 13)
+        header_layout.setSpacing(12)
+        header_icon = QLabel()
+        header_icon.setObjectName("mailViewerHeaderIcon")
+        header_icon.setFixedSize(38, 38)
+        header_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_icon.setPixmap(line_icon("mail", "#2563eb", 19).pixmap(19, 19))
+        header_layout.addWidget(header_icon)
         title_copy = QVBoxLayout()
         title_copy.setSpacing(1)
         title = QLabel("邮件阅读器")
         title.setObjectName("mailViewerTitle")
         account_label = QLabel(account.email)
         account_label.setObjectName("sectionCaption")
+        account_label.setWordWrap(True)
+        account_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         title_copy.addWidget(title)
         title_copy.addWidget(account_label)
-        header_layout.addLayout(title_copy)
+        header_layout.addLayout(title_copy, 1)
         header_layout.addStretch(1)
         self.fetch_button = QPushButton("立即取件")
         self.fetch_button.setObjectName("primaryButton")
@@ -144,6 +156,7 @@ class MailViewerDialog(QDialog):
         sidebar_layout.setContentsMargins(12, 12, 10, 12)
         sidebar_layout.setSpacing(8)
         self.search_input = QLineEdit()
+        self.search_input.setObjectName("mailViewerSearch")
         self.search_input.setPlaceholderText("搜索当前邮箱的主题、发件人或正文…")
         self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self._populate_lists)
@@ -162,6 +175,11 @@ class MailViewerDialog(QDialog):
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(18, 14, 18, 16)
         content_layout.setSpacing(8)
+        message_header = QFrame()
+        message_header.setObjectName("mailViewerMessageHeader")
+        message_header_layout = QVBoxLayout(message_header)
+        message_header_layout.setContentsMargins(14, 12, 14, 13)
+        message_header_layout.setSpacing(3)
         self.sender_label = QLabel("选择一封邮件")
         self.sender_label.setObjectName("mailViewerSender")
         self.sender_label.setTextInteractionFlags(
@@ -169,6 +187,7 @@ class MailViewerDialog(QDialog):
         )
         self.sender_address_label = QLabel()
         self.sender_address_label.setObjectName("mailViewerSenderAddress")
+        self.sender_address_label.setWordWrap(True)
         self.sender_address_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -177,11 +196,13 @@ class MailViewerDialog(QDialog):
         self.subject_label.setWordWrap(True)
         self.meta_label = QLabel()
         self.meta_label.setObjectName("sectionCaption")
+        self.meta_label.setWordWrap(True)
         self.meta_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        content_layout.addWidget(self.sender_label)
-        content_layout.addWidget(self.sender_address_label)
-        content_layout.addWidget(self.subject_label)
-        content_layout.addWidget(self.meta_label)
+        message_header_layout.addWidget(self.sender_label)
+        message_header_layout.addWidget(self.sender_address_label)
+        message_header_layout.addWidget(self.subject_label)
+        message_header_layout.addWidget(self.meta_label)
+        content_layout.addWidget(message_header)
         self._build_translation_bar(content_layout)
         self._build_attachment_panel(content_layout)
         self.body = EmailBodyView()

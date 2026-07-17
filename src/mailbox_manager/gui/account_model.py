@@ -5,6 +5,7 @@ from datetime import datetime
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QKeyEvent, QMouseEvent, QPainter
 from PySide6.QtWidgets import (
+    QApplication,
     QHeaderView,
     QStyle,
     QStyleOptionButton,
@@ -78,8 +79,11 @@ class AccountTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.ForegroundRole and index.column() == 7:
             return _status_color(account.status)
         if role == Qt.ItemDataRole.FontRole and index.column() in {1, 7}:
-            font = QFont()
-            font.setWeight(QFont.Weight.DemiBold)
+            application = QApplication.instance()
+            font = QFont(application.font()) if application is not None else QFont()
+            font.setWeight(
+                QFont.Weight(max(int(font.weight()), int(QFont.Weight.DemiBold)))
+            )
             return font
         if role == Qt.ItemDataRole.TextAlignmentRole and index.column() in {0, 3, 6, 7}:
             return Qt.AlignmentFlag.AlignCenter

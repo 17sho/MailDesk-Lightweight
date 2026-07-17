@@ -7,6 +7,7 @@ from functools import partial
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
+    QFont,
     QFontMetrics,
     QPainter,
     QPainterPath,
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from mailbox_manager.domain.status import STATUS_LABELS
+from mailbox_manager.gui.appearance import DEFAULT_THEME, THEME_BY_ID
 from mailbox_manager.gui.icons import line_icon
 from mailbox_manager.storage.enterprise_repositories import StatisticsRepository
 from mailbox_manager.storage.repositories import MessageRepository
@@ -192,6 +194,7 @@ class _DashboardChart(QWidget):
         self.setMinimumHeight(190)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._chart_id = chart_id
+        self._theme_id = DEFAULT_THEME
         self._dark = False
         self._health_segments: tuple[tuple[str, int, QColor], ...] = ()
         self._trend_points: tuple[tuple[object, int], ...] = ()
@@ -221,8 +224,14 @@ class _DashboardChart(QWidget):
         maximum = max((count for _timestamp, count in self._trend_points), default=0)
         return max(1, maximum + max(1, round(maximum * 0.15)))
 
-    def set_theme(self, dark: bool) -> None:
-        self._dark = bool(dark)
+    def set_theme(self, theme: str | bool) -> None:
+        theme_id = (
+            "midnight"
+            if theme is True
+            else DEFAULT_THEME if theme is False else str(theme)
+        )
+        self._theme_id = theme_id if theme_id in THEME_BY_ID else DEFAULT_THEME
+        self._dark = THEME_BY_ID[self._theme_id].dark
         self.update()
 
     def set_health_data(self, values: Sequence[tuple[str, int]]) -> None:
@@ -256,10 +265,11 @@ class _DashboardChart(QWidget):
             self._draw_trend(painter)
 
     def _draw_health(self, painter: QPainter) -> None:
-        foreground = QColor("#edf2f7" if self._dark else "#172033")
-        muted = QColor("#91a0b5" if self._dark else "#718096")
-        track = QColor("#2b374a" if self._dark else "#e7edf6")
-        panel = QColor("#202b3c" if self._dark else "#f6f8fc")
+        theme = THEME_BY_ID[self._theme_id]
+        foreground = QColor(theme.text)
+        muted = QColor(theme.muted)
+        track = QColor(theme.border)
+        panel = QColor(theme.panel)
         content = QRectF(self.rect()).adjusted(12, 9, -12, -9)
         if content.width() <= 40 or content.height() <= 40:
             return
@@ -328,16 +338,16 @@ class _DashboardChart(QWidget):
                 painter.drawArc(ring, start, span)
                 start += span
 
-        center_font = painter.font()
+        base_font = QFont(self.font())
+        center_font = QFont(base_font)
         center_font.setBold(True)
         center_font.setPointSize(max(15, center_font.pointSize() + 5))
         painter.setFont(center_font)
         painter.setPen(foreground)
         number_rect = QRectF(ring.left(), ring.top() + ring.height() * 0.28, ring.width(), 30)
         painter.drawText(number_rect, Qt.AlignmentFlag.AlignCenter, f"{total:,}")
-        label_font = painter.font()
-        label_font.setBold(False)
-        label_font.setPointSize(max(8, label_font.pointSize() - 7))
+        label_font = QFont(base_font)
+        label_font.setPointSize(max(8, label_font.pointSize() - 2))
         painter.setFont(label_font)
         painter.setPen(muted)
         painter.drawText(
@@ -362,12 +372,13 @@ class _DashboardChart(QWidget):
         panel: QColor,
         total: int,
     ) -> None:
+        base_font = QFont(self.font())
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(panel)
         painter.drawRoundedRect(details, 10, 10)
         inner = details.adjusted(14, 11, -14, -10)
         if not total:
-            title_font = painter.font()
+            title_font = QFont(base_font)
             title_font.setBold(True)
             title_font.setPointSize(max(10, title_font.pointSize() + 1))
             painter.setFont(title_font)
@@ -377,9 +388,8 @@ class _DashboardChart(QWidget):
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 "还没有邮箱账号",
             )
-            body_font = painter.font()
-            body_font.setBold(False)
-            body_font.setPointSize(max(8, body_font.pointSize() - 2))
+            body_font = QFont(base_font)
+            body_font.setPointSize(max(8, body_font.pointSize() - 1))
             painter.setFont(body_font)
             painter.setPen(muted)
             painter.drawText(
@@ -391,7 +401,7 @@ class _DashboardChart(QWidget):
             )
             return
 
-        heading_font = painter.font()
+        heading_font = QFont(base_font)
         heading_font.setBold(True)
         heading_font.setPointSize(max(9, heading_font.pointSize()))
         painter.setFont(heading_font)
@@ -403,8 +413,7 @@ class _DashboardChart(QWidget):
         )
         row_top = inner.top() + 25
         row_height = max(20.0, min(27.0, (inner.bottom() - row_top) / 5))
-        label_font = painter.font()
-        label_font.setBold(False)
+        label_font = QFont(base_font)
         label_font.setPointSize(max(8, label_font.pointSize() - 1))
         painter.setFont(label_font)
         metrics = QFontMetrics(label_font)
@@ -441,6 +450,7 @@ class _DashboardChart(QWidget):
         panel: QColor,
         total: int,
     ) -> None:
+        base_font = QFont(self.font())
         if not total:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(panel)
@@ -457,8 +467,7 @@ class _DashboardChart(QWidget):
         segments = self._health_segments[:6]
         column_width = details.width() / 2
         row_height = max(17.0, min(21.0, details.height() / 3))
-        label_font = painter.font()
-        label_font.setBold(False)
+        label_font = QFont(base_font)
         label_font.setPointSize(max(8, label_font.pointSize()))
         painter.setFont(label_font)
         metrics = QFontMetrics(label_font)
@@ -482,10 +491,11 @@ class _DashboardChart(QWidget):
             )
 
     def _draw_trend(self, painter: QPainter) -> None:
-        foreground = QColor("#d5dce7" if self._dark else "#475569")
-        muted = QColor("#7f8b9d" if self._dark else "#94a3b8")
-        grid = QColor("#2b374a" if self._dark else "#e8edf4")
-        accent = QColor("#60a5fa" if self._dark else "#2563eb")
+        theme = THEME_BY_ID[self._theme_id]
+        foreground = QColor(theme.text)
+        muted = QColor(theme.muted)
+        grid = QColor(theme.border)
+        accent = QColor(theme.accent)
         plot = QRectF(self.rect()).adjusted(42, 10, -12, -27)
         if plot.width() <= 20 or plot.height() <= 20:
             return
@@ -544,7 +554,7 @@ class _DashboardChart(QWidget):
         painter.drawPath(path)
         if self.points_visible:
             painter.setPen(QPen(accent, 1.5))
-            painter.setBrush(QColor("#151d2a" if self._dark else "#ffffff"))
+            painter.setBrush(QColor(theme.surface))
             for point in points:
                 painter.drawEllipse(point, 3.2, 3.2)
 
@@ -595,6 +605,7 @@ class DashboardWidget(QWidget):
         self.setObjectName("dashboard")
         self._statistics = statistics
         self._messages = messages
+        self._theme_id = DEFAULT_THEME
         self._dark = False
         self._fetch_state = "idle"
         self._proxy_enabled = bool(proxy_enabled)
@@ -974,13 +985,24 @@ class DashboardWidget(QWidget):
         card_layout.addWidget(chart_view, 1)
         return card, chart_view
 
-    def apply_theme(self, dark: bool) -> None:
-        self._dark = dark
-        self.health_chart.set_theme(dark)
-        self.rate_chart.set_theme(dark)
-        self.refresh_button.setIcon(
-            line_icon("refresh", "#94a3b8" if dark else "#64748b", 17)
+    def apply_theme(self, theme: str | bool) -> None:
+        theme_id = (
+            "midnight"
+            if theme is True
+            else DEFAULT_THEME if theme is False else str(theme)
         )
+        self._theme_id = theme_id if theme_id in THEME_BY_ID else DEFAULT_THEME
+        definition = THEME_BY_ID[self._theme_id]
+        self._dark = definition.dark
+        self.health_chart.set_theme(self._theme_id)
+        self.rate_chart.set_theme(self._theme_id)
+        self.refresh_button.setIcon(line_icon("refresh", definition.muted, 17))
+        for action_id, button in self.quick_action_buttons.items():
+            if action_id == "fetch":
+                continue
+            button.setIcon(
+                line_icon(QUICK_ACTIONS_BY_ID[action_id].icon, definition.accent, 22)
+            )
         self._apply_fetch_state()
         self._update_proxy_card()
         self.refresh()
@@ -1006,7 +1028,9 @@ class DashboardWidget(QWidget):
             button.setEnabled(True)
             icon_name = "bolt"
         button.setProperty("state", self._fetch_state)
-        button.setIcon(line_icon(icon_name, "#60a5fa" if self._dark else "#3b82f6", 22))
+        button.setIcon(
+            line_icon(icon_name, THEME_BY_ID[self._theme_id].accent, 22)
+        )
         button.style().unpolish(button)
         button.style().polish(button)
 
@@ -1025,7 +1049,7 @@ class DashboardWidget(QWidget):
         self.proxy_toggle_button.setEnabled(enabled)
 
     def _update_proxy_card(self) -> None:
-        color = "#a78bfa" if self._dark else "#7c3aed"
+        color = THEME_BY_ID[self._theme_id].accent
         if self._proxy_enabled:
             self.proxy_card.set_hint(f"代理取件已开启 · {self._proxy_count} 个可用")
             self.proxy_toggle_button.setText("关闭")

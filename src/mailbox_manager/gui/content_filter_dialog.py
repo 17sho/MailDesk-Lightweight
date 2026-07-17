@@ -4,12 +4,13 @@ import csv
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QThreadPool
+from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from mailbox_manager.domain.models import FetchRequest
+from mailbox_manager.gui.icons import line_icon
 from mailbox_manager.gui.workers import DeepSearchWorker
 from mailbox_manager.services.content_filter import (
     ContentMatch,
@@ -63,23 +65,50 @@ class ContentFilterDialog(QDialog):
         self.resize(1080, 680)
         self.setMinimumSize(820, 520)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(10)
-        title = QLabel("筛选邮件中的指定文字或链接")
-        title.setObjectName("sectionTitle")
-        layout.addWidget(title)
-        help_label = QLabel(
-            "搜索全部本地邮件头和已加载正文；尚未点开的正文不会自动批量下载。"
-            "只输出命中的链接或文字片段，不会复制、展示或导出整封邮件正文。"
-            "通配符支持 * 和 ?，正则适合提取订单号、验证码等固定格式。"
-        )
-        help_label.setObjectName("sectionCaption")
-        help_label.setWordWrap(True)
-        layout.addWidget(help_label)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        controls = QHBoxLayout()
-        controls.setSpacing(8)
+        header = QFrame()
+        header.setObjectName("utilityDialogHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(24, 18, 24, 17)
+        header_layout.setSpacing(13)
+        icon = QLabel()
+        icon.setObjectName("utilityDialogIcon")
+        icon.setFixedSize(42, 42)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setPixmap(line_icon("filter", "#2563eb", 21).pixmap(21, 21))
+        header_layout.addWidget(icon)
+        title_copy = QVBoxLayout()
+        title_copy.setSpacing(2)
+        title = QLabel("筛选邮件中的指定文字或链接")
+        title.setObjectName("utilityDialogTitle")
+        help_label = QLabel(
+            "只输出匹配的链接或文字片段，不导出整封邮件正文"
+        )
+        help_label.setObjectName("utilityDialogSubtitle")
+        help_label.setWordWrap(True)
+        title_copy.addWidget(title)
+        title_copy.addWidget(help_label)
+        header_layout.addLayout(title_copy, 1)
+        root.addWidget(header)
+
+        content = QWidget()
+        content.setObjectName("utilityDialogContent")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(20, 17, 20, 17)
+        layout.setSpacing(11)
+
+        controls_card = QFrame()
+        controls_card.setObjectName("filterControlCard")
+        controls_layout = QVBoxLayout(controls_card)
+        controls_layout.setContentsMargins(14, 12, 14, 13)
+        controls_layout.setSpacing(9)
+        controls_title = QLabel("筛选条件")
+        controls_title.setObjectName("utilitySectionTitle")
+        controls_layout.addWidget(controls_title)
+
         self.query_input = QLineEdit()
         self.query_input.setObjectName("contentFilterQuery")
         self.query_input.setPlaceholderText(
@@ -87,13 +116,16 @@ class ContentFilterDialog(QDialog):
         )
         self.query_input.setClearButtonEnabled(True)
         self.query_input.returnPressed.connect(self.run_filter)
-        controls.addWidget(self.query_input, 1)
+        controls_layout.addWidget(self.query_input)
+        controls = QHBoxLayout()
+        controls.setSpacing(8)
         self.mode_combo = QComboBox()
         self.mode_combo.setObjectName("contentFilterMode")
         self.mode_combo.addItem("精确包含", ContentMatchMode.LITERAL.value)
         self.mode_combo.addItem("通配符", ContentMatchMode.WILDCARD.value)
         self.mode_combo.addItem("正则表达式", ContentMatchMode.REGEX.value)
-        self.mode_combo.setMaximumWidth(140)
+        self.mode_combo.setMinimumWidth(140)
+        self.mode_combo.setMaximumWidth(180)
         controls.addWidget(self.mode_combo)
         self.scope_combo = QComboBox()
         self.scope_combo.setObjectName("contentFilterScope")
@@ -104,24 +136,45 @@ class ContentFilterDialog(QDialog):
         self.scope_combo.setMaximumWidth(300)
         self.scope_combo.currentIndexChanged.connect(self._refresh_coverage_label)
         controls.addWidget(self.scope_combo)
+        controls.addStretch(1)
         self.filter_button = QPushButton("开始筛选")
         self.filter_button.setObjectName("primaryButton")
+        self.filter_button.setMinimumWidth(96)
+        self.filter_button.setMaximumWidth(190)
         self.filter_button.clicked.connect(self.run_filter)
         controls.addWidget(self.filter_button)
         self.deep_filter_button = QPushButton("联网深度筛选")
+        self.deep_filter_button.setMinimumWidth(118)
+        self.deep_filter_button.setMaximumWidth(240)
         self.deep_filter_button.setToolTip(
             "由邮箱服务器搜索正文，只下载命中的邮件；POP3 邮箱需要逐封扫描"
         )
+        self.deep_filter_button.setObjectName("secondaryButton")
         self.deep_filter_button.clicked.connect(self.run_deep_filter)
         controls.addWidget(self.deep_filter_button)
-        layout.addLayout(controls)
+        controls_layout.addLayout(controls)
+        guidance = QLabel(
+            "精确包含适合普通文字和域名；通配符支持 * 和 ?；"
+            "正则表达式适合订单号、验证码等固定格式。"
+        )
+        guidance.setObjectName("filterGuidance")
+        guidance.setWordWrap(True)
+        controls_layout.addWidget(guidance)
+        layout.addWidget(controls_card)
 
-        result_bar = QHBoxLayout()
+        result_bar_frame = QFrame()
+        result_bar_frame.setObjectName("filterResultBar")
+        result_bar = QHBoxLayout(result_bar_frame)
+        result_bar.setContentsMargins(2, 0, 2, 0)
+        result_bar.setSpacing(8)
+        result_title = QLabel("筛选结果")
+        result_title.setObjectName("utilitySectionTitle")
+        result_bar.addWidget(result_title)
         self.result_label = QLabel("尚未筛选")
         self.result_label.setObjectName("mutedLabel")
         result_bar.addWidget(self.result_label)
         result_bar.addStretch(1)
-        layout.addLayout(result_bar)
+        layout.addWidget(result_bar_frame)
 
         self.table = QTableWidget(0, 5)
         self.table.setObjectName("contentFilterResults")
@@ -139,8 +192,13 @@ class ContentFilterDialog(QDialog):
         for column, width in enumerate((220, 240, 190, 390, 145)):
             header.resizeSection(column, width)
         layout.addWidget(self.table, 1)
+        root.addWidget(content, 1)
 
-        actions = QHBoxLayout()
+        footer = QFrame()
+        footer.setObjectName("utilityDialogFooter")
+        actions = QHBoxLayout(footer)
+        actions.setContentsMargins(20, 13, 20, 13)
+        actions.setSpacing(8)
         self.copy_button = QPushButton("复制全部结果")
         self.copy_button.setEnabled(False)
         self.copy_button.clicked.connect(self.copy_results)
@@ -155,9 +213,10 @@ class ContentFilterDialog(QDialog):
         actions.addWidget(self.export_txt_button)
         actions.addStretch(1)
         close_button = QPushButton("关闭")
+        close_button.setObjectName("secondaryButton")
         close_button.clicked.connect(self.accept)
         actions.addWidget(close_button)
-        layout.addLayout(actions)
+        root.addWidget(footer)
         self._refresh_coverage_label()
         self.query_input.textChanged.connect(self._refresh_deep_button)
         self.mode_combo.currentIndexChanged.connect(self._refresh_deep_button)

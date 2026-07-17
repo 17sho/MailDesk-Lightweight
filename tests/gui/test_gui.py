@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QAbstractAnimation, Qt, QUrl
+from PySide6.QtCore import QPoint, Qt, QUrl
 from PySide6.QtGui import QCloseEvent, QFont
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QAbstractItemView,
     QAbstractSpinBox,
     QApplication,
     QDialog,
     QFileDialog,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -36,8 +39,10 @@ from mailbox_manager.domain.models import (
 )
 from mailbox_manager.gui.account_model import AccountTableModel
 from mailbox_manager.gui.add_account_dialog import AddAccountDialog
+from mailbox_manager.gui.appearance import scaled_stylesheet
 from mailbox_manager.gui.close_dialog import (
     CLOSE_ACTION_ASK,
+    CLOSE_ACTION_EXIT,
     CLOSE_ACTION_TRAY,
     CloseWindowDialog,
 )
@@ -46,8 +51,14 @@ from mailbox_manager.gui.content_filter_dialog import ContentFilterDialog
 from mailbox_manager.gui.import_dialog import ImportPreviewDialog
 from mailbox_manager.gui.mail_viewer_dialog import MailViewerDialog
 from mailbox_manager.gui.main_window import MainWindow
+from mailbox_manager.gui.motion import (
+    AnimatedStackedWidget,
+    AnimatedTabWidget,
+    SnapshotTransition,
+)
 from mailbox_manager.gui.proxy_dialog import AddProxyDialog
 from mailbox_manager.gui.settings_dialog import EnterpriseSettingsDialog
+from mailbox_manager.gui.theme import LIGHT_THEME
 from mailbox_manager.importers.smart_parser import SmartAccountParser
 from mailbox_manager.services.send_service import (
     OutgoingDraft,
@@ -293,8 +304,16 @@ def test_settings_dialog_uses_responsive_navigation_and_linked_controls(qtbot) -
     qtbot.addWidget(dialog)
 
     assert dialog.minimumWidth() >= 720
-    assert dialog.navigation.count() == 9
-    assert dialog.pages.count() == 9
+    assert dialog.navigation.count() == 10
+    assert (
+        dialog.navigation.horizontalScrollBarPolicy()
+        is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    )
+    assert all(
+        not dialog.navigation.item(row).icon().isNull()
+        for row in range(dialog.navigation.count())
+    )
+    assert dialog.pages.count() == 10
     assert (
         dialog.pages.widget(0).horizontalScrollBarPolicy()
         is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
@@ -334,15 +353,87 @@ def test_settings_dialog_uses_responsive_navigation_and_linked_controls(qtbot) -
         "content_filter",
     ]
     assert dialog.values()["proxy_fetch_enabled"] is False
-    assert dialog.values()["close_action"] == CLOSE_ACTION_ASK
     dialog.navigation.setCurrentRow(8)
     assert dialog.pages.currentIndex() == 8
+    assert dialog.navigation.currentItem().text() == "关闭与托盘"
+    assert dialog.values()["close_action"] == CLOSE_ACTION_ASK
+    dialog.navigation.setCurrentRow(9)
+    assert dialog.pages.currentIndex() == 9
     assert dialog.update_check_button.text() == "检查系统更新"
+
+
+def test_dense_dialogs_expand_for_large_application_font(qtbot) -> None:
+    application = QApplication.instance()
+    assert application is not None
+    previous_font = application.font()
+    large_font = QFont(previous_font)
+    large_font.setPointSize(18)
+    application.setFont(large_font)
+    try:
+        add_dialog = AddAccountDialog()
+        settings_dialog = EnterpriseSettingsDialog()
+        qtbot.addWidget(add_dialog)
+        qtbot.addWidget(settings_dialog)
+
+        assert add_dialog.minimumWidth() >= 940
+        assert settings_dialog.minimumWidth() >= 940
+    finally:
+        application.setFont(previous_font)
+
+
+def test_settings_navigation_does_not_elide_labels_with_large_font(qtbot) -> None:
+    application = QApplication.instance()
+    assert application is not None
+    previous_font = application.font()
+    previous_stylesheet = application.styleSheet()
+    large_font = QFont(previous_font)
+    large_font.setPointSize(18)
+    application.setFont(large_font)
+    application.setStyleSheet(scaled_stylesheet(LIGHT_THEME, 18))
+    dialog = EnterpriseSettingsDialog()
+    qtbot.addWidget(dialog)
+    try:
+        dialog.show()
+        QApplication.processEvents()
+
+        assert (
+            dialog.navigation.viewport().width()
+            >= dialog.navigation.sizeHintForColumn(0)
+        )
+    finally:
+        application.setFont(previous_font)
+        application.setStyleSheet(previous_stylesheet)
+
+
+def test_large_font_dialog_buttons_are_not_compressed(qtbot) -> None:
+    application = QApplication.instance()
+    assert application is not None
+    previous_font = application.font()
+    previous_stylesheet = application.styleSheet()
+    large_font = QFont(previous_font)
+    large_font.setPointSize(18)
+    application.setFont(large_font)
+    application.setStyleSheet(scaled_stylesheet(LIGHT_THEME, 18))
+    dialogs = [AddAccountDialog(), AddProxyDialog(), EnterpriseSettingsDialog()]
+    try:
+        for dialog in dialogs:
+            qtbot.addWidget(dialog)
+            dialog.show()
+            QApplication.processEvents()
+            for button in dialog.findChildren(QAbstractButton):
+                if not button.isVisibleTo(dialog) or not button.text().strip():
+                    continue
+                assert button.width() >= button.sizeHint().width(), button.text()
+                assert button.height() >= button.sizeHint().height(), button.text()
+    finally:
+        application.setFont(previous_font)
+        application.setStyleSheet(previous_stylesheet)
 
 
 def test_close_window_dialog_returns_choice_and_remember_flag(qtbot) -> None:
     dialog = CloseWindowDialog(tray_available=True)
     qtbot.addWidget(dialog)
+    assert dialog.close_button.accessibleName() == "取消关闭"
     dialog.remember_checkbox.setChecked(True)
 
     dialog.tray_button.click()
@@ -436,6 +527,53 @@ def test_close_choice_can_be_remembered_and_minimizes_to_tray(
     assert saved["close_action"] == CLOSE_ACTION_TRAY
 
 
+def test_close_behavior_can_be_changed_back_to_ask_without_a_tray(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    class UserCloseEvent(QCloseEvent):
+        def spontaneous(self) -> bool:
+            return True
+
+    database = Database(tmp_path / "close-choice-reset.db")
+    database.initialize()
+    cipher = CredentialCipher.from_raw_key(b"R" * 32)
+    settings = SettingsRepository(database)
+    settings.set("enterprise_ui", {"close_action": CLOSE_ACTION_EXIT})
+    window = MainWindow(
+        AccountRepository(database, cipher),
+        MessageRepository(database),
+        settings=settings,
+    )
+    qtbot.addWidget(window)
+    window._persist_close_action(CLOSE_ACTION_ASK)
+    window.show()
+    QApplication.processEvents()
+    dialog_calls: list[bool] = []
+
+    class CancelledCloseDialog:
+        DialogCode = QDialog.DialogCode
+
+        def __init__(self, _parent=None, *, tray_available=True) -> None:
+            dialog_calls.append(tray_available)
+            self.selected_action = None
+            self.remember_choice = False
+
+        def exec(self) -> QDialog.DialogCode:
+            return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(
+        "mailbox_manager.gui.main_window.CloseWindowDialog",
+        CancelledCloseDialog,
+    )
+    event = UserCloseEvent()
+
+    window.closeEvent(event)
+
+    assert dialog_calls == [False]
+    assert event.isAccepted() is False
+    assert window._configured_close_action() == CLOSE_ACTION_ASK
+
+
 def test_add_proxy_dialog_builds_named_encrypted_proxy_input(qtbot) -> None:
     dialog = AddProxyDialog()
     qtbot.addWidget(dialog)
@@ -472,7 +610,59 @@ def test_settings_buttons_emit_proxy_and_update_requests(qtbot) -> None:
 
     assert proxy_requests == [True]
     assert update_requests == [True]
+    assert dialog.proxy_management_row.objectName() == "settingsInlineAction"
+    assert dialog.update_check_button.isEnabled() is False
+    assert dialog.update_status_label.property("state") == "checking"
+    dialog.set_update_status("current", "当前已是最新正式版本。")
+    assert dialog.update_check_button.isEnabled() is True
+    assert dialog.update_status_label.text() == "当前已是最新正式版本。"
     assert dialog.proxy_count_label.text() == "当前已保存 3 个代理"
+
+
+def test_settings_action_row_labels_align_with_large_buttons(qtbot) -> None:
+    app = QApplication.instance()
+    assert app is not None
+    previous_font = app.font()
+    previous_stylesheet = app.styleSheet()
+    large_font = QFont(previous_font)
+    large_font.setPointSize(18)
+    app.setFont(large_font)
+    app.setStyleSheet(scaled_stylesheet(LIGHT_THEME, 18))
+    dialog = EnterpriseSettingsDialog({"proxy_count": 0})
+    qtbot.addWidget(dialog)
+    try:
+        dialog.navigation.setCurrentRow(2)
+        dialog.resize(1220, 760)
+        dialog.show()
+        QApplication.processEvents()
+
+        field_label = next(
+            label
+            for label in dialog.findChildren(QLabel)
+            if label.text() == "代理管理"
+        )
+        label_top = field_label.mapTo(dialog, QPoint(0, 0)).y()
+        row_top = dialog.proxy_management_row.mapTo(dialog, QPoint(0, 0)).y()
+        label_center = label_top + field_label.height() / 2
+        row_center = row_top + dialog.proxy_management_row.height() / 2
+
+        assert abs(label_center - row_center) <= 1
+    finally:
+        app.setFont(previous_font)
+        app.setStyleSheet(previous_stylesheet)
+
+
+def test_settings_multiline_field_labels_stay_top_aligned(qtbot) -> None:
+    dialog = EnterpriseSettingsDialog()
+    qtbot.addWidget(dialog)
+
+    proxy_list_label = next(
+        label
+        for label in dialog.findChildren(QLabel)
+        if label.text() == "代理列表"
+    )
+
+    assert proxy_list_label.alignment() & Qt.AlignmentFlag.AlignTop
 
 
 def test_main_window_add_proxy_dialog_persists_encrypted_proxy(
@@ -621,6 +811,11 @@ def test_add_account_dialog_builds_provider_specific_accounts(qtbot) -> None:
 
     assert dialog.provider_list.count() == 10
     assert dialog.selected_provider_key == "microsoft"
+    assert all(
+        dialog.provider_list.item(row).toolTip()
+        == dialog.provider_list.item(row).text()
+        for row in range(dialog.provider_list.count())
+    )
     assert dialog.oauth_card.isVisible() is True
     assert dialog.secret.isVisible() is False
 
@@ -807,17 +1002,29 @@ def test_log_drawer_is_hidden_by_default_and_can_be_toggled(qtbot, tmp_path) -> 
     window.show()
 
     assert window.log_dock.isVisible() is False
-    assert window.dockOptions() & window.DockOption.AnimatedDocks
+    assert not window.dockOptions() & window.DockOption.AnimatedDocks
     window.log_action.trigger()
     assert window.log_dock.isVisible() is True
     assert window.log_action.text() == "收起运行日志"
-    qtbot.waitUntil(
-        lambda: window._log_opacity_animation.state()
-        is QAbstractAnimation.State.Stopped
-    )
     window.log_action.trigger()
     assert window.log_action.text() == "显示运行日志"
-    qtbot.waitUntil(lambda: window.log_dock.isVisible() is False)
+    assert window.log_dock.isVisible() is False
+
+
+def test_log_drawer_handles_rapid_repeated_toggles(qtbot, tmp_path) -> None:
+    database = Database(tmp_path / "rapid-log-drawer.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"R" * 32))
+    window = MainWindow(accounts, MessageRepository(database))
+    qtbot.addWidget(window)
+    window.show()
+
+    for visible in (True, False, True, False, True):
+        window._set_log_drawer_visible(visible)
+        assert window.log_dock.isVisible() is visible
+        assert window.log_action.isChecked() is visible
+
+    assert window.log_action.text() == "收起运行日志"
 
 
 def test_main_message_body_initializes_lightweight_reader_only_when_used(qtbot, tmp_path) -> None:
@@ -1174,6 +1381,33 @@ def test_content_filter_reports_loaded_body_coverage(qtbot, tmp_path) -> None:
     assert "1 封正文尚未加载" in window.message_context_label.text()
 
 
+def test_content_filter_actions_fit_large_font(qtbot, tmp_path) -> None:
+    application = QApplication.instance()
+    assert application is not None
+    previous_font = application.font()
+    previous_stylesheet = application.styleSheet()
+    large_font = QFont(previous_font)
+    large_font.setPointSize(18)
+    application.setFont(large_font)
+    application.setStyleSheet(scaled_stylesheet(LIGHT_THEME, 18))
+    database = Database(tmp_path / "content-filter-layout.db")
+    database.initialize()
+    dialog = ContentFilterDialog(MessageRepository(database))
+    qtbot.addWidget(dialog)
+    try:
+        dialog.show()
+        QApplication.processEvents()
+
+        assert dialog.filter_button.width() >= dialog.filter_button.sizeHint().width()
+        assert (
+            dialog.deep_filter_button.width()
+            >= dialog.deep_filter_button.sizeHint().width()
+        )
+    finally:
+        application.setFont(previous_font)
+        application.setStyleSheet(previous_stylesheet)
+
+
 def test_copy_totp_places_only_current_code_on_clipboard(qtbot, tmp_path) -> None:
     database = Database(tmp_path / "totp.db")
     database.initialize()
@@ -1243,6 +1477,76 @@ def test_enterprise_window_filters_tree_groups_and_shows_dashboard(qtbot, tmp_pa
     assert window.account_model.account_at(0).tags == ("重点",)  # type: ignore[union-attr]
     window.group_tree.setCurrentItem(root.child(0))
     assert window.account_model.rowCount() == 0
+
+
+def test_main_navigation_surfaces_use_scoped_interruptible_motion(
+    qtbot,
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "navigation-motion.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"M" * 32))
+    accounts.add_many([_account()])
+    window = MainWindow(
+        accounts,
+        MessageRepository(database),
+        statistics=StatisticsRepository(database),
+    )
+    window.resize(1200, 800)
+    qtbot.addWidget(window)
+    window.show()
+    QApplication.processEvents()
+
+    assert isinstance(window.main_tabs, AnimatedTabWidget)
+    assert isinstance(window.account_stack, AnimatedStackedWidget)
+    assert isinstance(window.message_tabs, AnimatedTabWidget)
+
+    window.main_tabs.setCurrentIndex(1)
+    assert window.main_tabs.currentWidget() is window.account_workspace
+    assert window.main_tabs.active_transition is not None
+
+    window.message_tabs.setCurrentIndex(1)
+    assert window.message_tabs.active_transition is not None
+
+
+def test_settings_category_navigation_uses_short_page_transition(qtbot) -> None:
+    dialog = EnterpriseSettingsDialog()
+    dialog.resize(980, 680)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    QApplication.processEvents()
+
+    assert isinstance(dialog.pages, AnimatedStackedWidget)
+    dialog.navigation.setCurrentRow(1)
+
+    assert dialog.pages.currentIndex() == 1
+    assert dialog.pages.active_transition is not None
+
+
+def test_theme_switch_crossfades_from_current_visible_frame(qtbot, tmp_path) -> None:
+    database = Database(tmp_path / "theme-motion.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"T" * 32))
+    window = MainWindow(accounts, MessageRepository(database))
+    window.resize(1000, 700)
+    qtbot.addWidget(window)
+    window.show()
+    QApplication.processEvents()
+    previous_theme = window._dark
+
+    window.toggle_theme()
+
+    first_transition = window._theme_transition
+    assert window._dark is not previous_theme
+    assert isinstance(first_transition, SnapshotTransition)
+    assert first_transition.is_running is True
+    assert getattr(first_transition, "has_painted", False) is True
+    assert first_transition.offset == QPoint()
+    assert first_transition.duration <= 220
+
+    window.toggle_theme()
+    assert window._dark is previous_theme
+    assert window._theme_transition is not first_transition
 
 
 def test_account_column_visibility_is_saved_without_sensitive_columns(qtbot, tmp_path) -> None:
@@ -1396,3 +1700,17 @@ def test_compose_dialog_builds_rich_draft_with_attachment(
     assert dialog.draft.subject == "测试邮件"
     assert dialog.draft.attachments[0].filename == "invoice.txt"
     assert dialog.draft.attachments[0].content == b"invoice-data"
+
+
+def test_compose_header_wraps_long_sender_summary(qtbot) -> None:
+    account = replace(
+        _account(),
+        email="long.account.address.for.visual.audit@example.com",
+    )
+    dialog = ComposeDialog([account])
+    qtbot.addWidget(dialog)
+
+    subtitle = dialog.findChild(QLabel, "composeSubtitle")
+
+    assert subtitle is not None
+    assert subtitle.wordWrap() is True

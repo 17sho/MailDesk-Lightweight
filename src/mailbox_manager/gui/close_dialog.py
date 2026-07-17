@@ -129,6 +129,7 @@ class CloseWindowDialog(QDialog):
         self.close_button.setIcon(line_icon("close", "#94a3b8", 18))
         self.close_button.setIconSize(QSize(18, 18))
         self.close_button.setToolTip("取消")
+        self.close_button.setAccessibleName("取消关闭")
         self.close_button.clicked.connect(self.reject)
         header.addWidget(title)
         header.addStretch(1)

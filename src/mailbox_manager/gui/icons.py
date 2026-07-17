@@ -1,3 +1,5 @@
+from math import ceil
+
 from PySide6.QtCore import QByteArray, QRectF, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
@@ -97,8 +99,10 @@ _PATHS = {
     """,
 }
 
+_DEVICE_PIXEL_RATIOS = (1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 3.0)
 
-def line_icon(name: str, color: str = "#64748b", size: int = 20) -> QIcon:
+
+def _icon_renderer(name: str, color: str) -> QSvgRenderer:
     path = _PATHS[name].format(color=color)
     svg = f"""
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
@@ -106,7 +110,28 @@ def line_icon(name: str, color: str = "#64748b", size: int = 20) -> QIcon:
          stroke-linecap="round" stroke-linejoin="round">{path}</g>
     </svg>
     """
-    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+    return QSvgRenderer(QByteArray(svg.encode("utf-8")))
+
+
+def _add_icon_pixmaps(
+    icon: QIcon,
+    renderer: QSvgRenderer,
+    size: int,
+    mode: QIcon.Mode,
+) -> None:
+    for device_pixel_ratio in _DEVICE_PIXEL_RATIOS:
+        canvas_size = ceil(size * device_pixel_ratio)
+        pixmap = QPixmap(canvas_size, canvas_size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter, QRectF(0, 0, canvas_size, canvas_size))
+        painter.end()
+        pixmap.setDevicePixelRatio(device_pixel_ratio)
+        icon.addPixmap(pixmap, mode, QIcon.State.Off)
+
+
+def line_icon(name: str, color: str = "#64748b", size: int = 20) -> QIcon:
+    renderer = _icon_renderer(name, color)
     canvas_size = max(size * 2, 32)
     pixmap = QPixmap(canvas_size, canvas_size)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -115,3 +140,25 @@ def line_icon(name: str, color: str = "#64748b", size: int = 20) -> QIcon:
     painter.end()
     pixmap.setDevicePixelRatio(canvas_size / size)
     return QIcon(pixmap)
+
+
+def stateful_line_icon(
+    name: str,
+    normal_color: str,
+    selected_color: str,
+    size: int = 20,
+) -> QIcon:
+    icon = QIcon()
+    _add_icon_pixmaps(
+        icon,
+        _icon_renderer(name, normal_color),
+        size,
+        QIcon.Mode.Normal,
+    )
+    _add_icon_pixmaps(
+        icon,
+        _icon_renderer(name, selected_color),
+        size,
+        QIcon.Mode.Selected,
+    )
+    return icon

@@ -10,6 +10,7 @@ from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from mailbox_manager.gui import update_dialog as update_dialog_module
+from mailbox_manager.gui.motion import SmoothProgressBar
 from mailbox_manager.gui.theme import DARK_THEME, LIGHT_THEME
 from mailbox_manager.gui.update_dialog import UpdateDialog, UpdateDialogState
 
@@ -73,6 +74,14 @@ def test_skip_and_later_are_distinct_actions(qtbot) -> None:
     assert later.isVisible() is False
 
 
+def test_close_control_uses_a_font_independent_icon(qtbot) -> None:
+    dialog = _dialog(qtbot)
+
+    assert dialog.close_button.text() == ""
+    assert dialog.close_button.icon().isNull() is False
+    assert dialog.close_button.toolTip() == "稍后处理"
+
+
 def test_download_progress_supports_sizes_clamping_and_indeterminate(qtbot) -> None:
     dialog = _dialog(qtbot)
 
@@ -85,19 +94,19 @@ def test_download_progress_supports_sizes_clamping_and_indeterminate(qtbot) -> N
     assert dialog.state is UpdateDialogState.DOWNLOADING
     assert dialog.progress_bar.minimum() == 0
     assert dialog.progress_bar.maximum() == 100
-    assert dialog.progress_bar.value() == 37
+    qtbot.waitUntil(lambda: dialog.progress_bar.value() == 37, timeout=1000)
     assert dialog.progress_percent_label.text() == "37%"
     assert dialog.progress_detail_label.text() == "3.0 MB / 8.0 MB"
 
     dialog.set_download_bytes(1 * 1024 * 1024, 4 * 1024 * 1024)
-    assert dialog.progress_bar.value() == 25
+    qtbot.waitUntil(lambda: dialog.progress_bar.value() == 25, timeout=1000)
     assert dialog.progress_detail_label.text() == "1.0 MB / 4.0 MB"
 
     dialog.set_download_status("正在校验并安全解压…")
     assert dialog.progress_status_label.text() == "正在校验并安全解压…"
 
     dialog.set_download_progress(120)
-    assert dialog.progress_bar.value() == 100
+    qtbot.waitUntil(lambda: dialog.progress_bar.value() == 100, timeout=1000)
     assert dialog.progress_percent_label.text() == "100%"
     assert "安全校验" in dialog.progress_detail_label.text()
 
@@ -105,6 +114,27 @@ def test_download_progress_supports_sizes_clamping_and_indeterminate(qtbot) -> N
     assert dialog.progress_bar.minimum() == 0
     assert dialog.progress_bar.maximum() == 0
     assert dialog.progress_percent_label.text() == "准备中"
+
+
+def test_download_progress_retargets_from_current_presented_value(qtbot) -> None:
+    dialog = _dialog(qtbot)
+
+    dialog.set_download_progress(72)
+
+    assert isinstance(dialog.progress_bar, SmoothProgressBar)
+    assert dialog.progress_bar.motion_target == 72
+    assert dialog.progress_bar.motion_running is True
+    qtbot.waitUntil(lambda: dialog.progress_bar.value() == 72, timeout=1000)
+
+    dialog.set_download_progress(95)
+    qtbot.wait(40)
+    presented_value = dialog.progress_bar.value()
+    dialog.set_download_progress(48)
+
+    assert dialog.progress_bar.motion_start == presented_value
+    assert dialog.progress_bar.motion_target == 48
+    assert dialog.progress_bar.motion_duration <= 160
+    qtbot.waitUntil(lambda: dialog.progress_bar.value() == 48, timeout=1000)
 
 
 def test_download_complete_prompts_for_restart_and_install(qtbot) -> None:
