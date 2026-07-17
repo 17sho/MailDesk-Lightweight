@@ -37,6 +37,7 @@ class FakeImap:
         self.logged_in = False
         self.closed = False
         self.fetch_queries: list[str] = []
+        self.search_args: list[tuple[object, ...]] = []
 
     def login(self, username: str, secret: str):
         assert username == "owner@example.com"
@@ -50,6 +51,7 @@ class FakeImap:
 
     def uid(self, command: str, *_args):
         if command.casefold() == "search":
+            self.search_args.append(_args)
             return "OK", [b"42"]
         self.fetch_queries.append(str(_args[-1]))
         raw = (
@@ -89,6 +91,22 @@ def test_imap_client_fetches_and_parses_bounded_messages() -> None:
     assert "771204" in loaded.matched_values
     assert "RFC822" in fake.fetch_queries[-1]
     assert fake.closed is True
+
+
+def test_imap_deep_search_uses_server_text_search_and_loads_matches() -> None:
+    fake = FakeImap()
+    client = ImapClient(_imap_account(), connection_factory=lambda *_a, **_kw: fake)
+
+    result = client.search_messages("如果您更改了", FetchRequest(max_messages=0))
+
+    assert result.status is AccountStatus.SUCCESS
+    assert len(result.messages) == 1
+    assert result.messages[0].body_loaded is True
+    assert result.messages[0].transport_id == "42"
+    assert fake.search_args == [
+        ("CHARSET", "UTF-8", "TEXT", '"如果您更改了"'.encode())
+    ]
+    assert "RFC822" in fake.fetch_queries[-1]
 
 
 def test_imap_client_zero_limit_fetches_all_matching_messages() -> None:

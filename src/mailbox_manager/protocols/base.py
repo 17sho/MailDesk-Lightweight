@@ -32,6 +32,11 @@ class EmailClientBase(ABC):
 
         raise NotImplementedError
 
+    def search_messages(self, query: str, request: FetchRequest) -> FetchResult:
+        """Search provider content and return complete matching messages."""
+
+        raise NotImplementedError
+
     @abstractmethod
     def close(self) -> None:
         """Release network resources; safe to call more than once."""

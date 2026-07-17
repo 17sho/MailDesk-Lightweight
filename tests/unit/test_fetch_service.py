@@ -41,6 +41,10 @@ class FakeClient:
             raise RuntimeError("no lazy body configured")
         return self.loaded_message
 
+    def search_messages(self, _query: str, request: FetchRequest) -> FetchResult:
+        self.request = request
+        return self.result
+
     def close(self) -> None:
         self.closed = True
 
@@ -142,6 +146,68 @@ def test_fetch_service_reuses_list_session_for_first_message_body(tmp_path) -> N
     assert client.closed is False
     service.close_message_sessions()
     assert client.aborted is True
+
+
+def test_fetch_service_deep_search_updates_existing_header_without_duplicate(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "deep-search.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"Q" * 32))
+    accounts.add_many(
+        [
+            EmailAccount(
+                email="deep@example.com",
+                provider="custom",
+                protocol=ProtocolType.IMAP,
+                host="imap.example.com",
+                port=993,
+                secret="secret",
+            )
+        ]
+    )
+    account = accounts.list_all()[0]
+    assert account.account_id is not None
+    messages = MessageRepository(database)
+    messages.add_many(
+        account.account_id,
+        (
+            MailMessage(
+                "provider-42",
+                "INBOX",
+                transport_id="42",
+                subject="邮件头",
+                body_loaded=False,
+            ),
+        ),
+    )
+    client = FakeClient(
+        FetchResult(
+            AccountStatus.SUCCESS,
+            (
+                MailMessage(
+                    "graph-or-server-id",
+                    "搜索结果",
+                    transport_id="42",
+                    subject="完整邮件",
+                    text_body="如果您更改了登录设置",
+                    body_loaded=True,
+                ),
+            ),
+        )
+    )
+    service = FetchService(accounts, messages, client_factory=lambda _account: client)
+
+    result = service.search_account(account, "如果您更改了", FetchRequest())
+    stored = messages.list_for_account(account.account_id)
+
+    assert result.status is AccountStatus.SUCCESS
+    assert len(stored) == 1
+    assert stored[0].folder == "INBOX"
+    assert stored[0].provider_message_id == "provider-42"
+    assert stored[0].body_loaded is True
+    assert "如果您更改了" in stored[0].text_body
+    service.close_message_sessions()
 
 
 def test_fetch_service_reuses_one_message_session_per_account(tmp_path) -> None:

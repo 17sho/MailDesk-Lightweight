@@ -68,3 +68,20 @@ def test_regex_filter_exports_only_the_matched_value() -> None:
     )
 
     assert [result.matched_content for result in results] == ["ORD-847291"]
+
+
+def test_literal_filter_searches_visible_html_when_plain_body_is_empty() -> None:
+    message = MailMessage(
+        message_id=4,
+        provider_message_id="html-only",
+        folder="INBOX",
+        text_body="",
+        html_body="<p>如果您<span>更改了</span>登录设置，请重新确认。</p>",
+    )
+
+    results = extract_content_matches(
+        [_hit(message)], "如果您更改了", ContentMatchMode.LITERAL
+    )
+
+    assert len(results) == 1
+    assert "如果您更改了" in results[0].matched_content

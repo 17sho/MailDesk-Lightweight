@@ -2,7 +2,7 @@
 
 面向 Windows 与 macOS 的本地多邮箱管理工具轻量版。
 
-[![Version](https://img.shields.io/badge/version-0.4.6-2563eb.svg)](https://github.com/17sho/MailDesk-Lightweight/releases)
+[![Version](https://img.shields.io/badge/version-0.4.7-2563eb.svg)](https://github.com/17sho/MailDesk-Lightweight/releases)
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg?logo=windows11&logoColor=white)](https://github.com/17sho/MailDesk-Lightweight/releases)
 [![macOS](https://img.shields.io/badge/macOS-13%2B-111111.svg?logo=apple&logoColor=white)](docs/MACOS.md)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab.svg?logo=python&logoColor=white)](https://www.python.org/)
@@ -46,7 +46,7 @@
 - 单账号立即取件、批量并发取件、跨文件夹扫描、增量同步。
 - IMAP、Graph 优先快速同步全部邮件头，点击列表项时才加载正文、图片和附件。
 - 邮件正文、发件人、收件人、附件、CID 图片、验证码和自定义内容提取。
-- 当前账号或全局邮件搜索，自定义筛选、复制与导出。
+- 当前账号或全局邮件搜索；可联网深度筛选 IMAP/Graph 正文并只下载命中邮件；支持自定义筛选、复制与导出。
 - 单账号发件和批量发件，支持附件。
 - 多级分组、标签、异常账号筛选、代理池和账号独立代理。
 - SQLite 本地持久化；敏感字段使用受 Windows DPAPI 或 macOS 钥匙串保护的 Fernet 密钥加密。
@@ -117,7 +117,7 @@ python -m ruff check src tests build.py build_macos.py release.py
 python -m pytest -q
 ```
 
-当前轻量版回归结果：`353 passed, 3 skipped`。
+当前轻量版回归结果：`358 passed, 3 skipped`。
 
 ## 安全与使用范围
 

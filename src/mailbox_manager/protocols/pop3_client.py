@@ -183,6 +183,54 @@ class Pop3Client(EmailClientBase):
             connection.dele(number)
         return loaded
 
+    def search_messages(self, query: str, request: FetchRequest) -> FetchResult:
+        """Scan POP3 messages because POP3 has no server-side search command."""
+
+        messages: list[MailMessage] = []
+        try:
+            value = query.strip().casefold()
+            if not value:
+                raise ValueError("深度搜索内容不能为空")
+            connection = self._connect()
+            count, _size = connection.stat()
+            remaining: int | None = None if request.unlimited else request.max_messages
+            for number, transport_id in reversed(_pop_transport_ids(connection, count)):
+                _status, lines, _octets = connection.retr(number)
+                raw = b"\r\n".join(lines) + b"\r\n"
+                loaded = parse_email_message(
+                    raw,
+                    folder="INBOX",
+                    keywords=request.keywords,
+                    custom_pattern=request.custom_pattern,
+                )
+                searchable = "\n".join(
+                    (
+                        loaded.subject,
+                        loaded.sender,
+                        *loaded.recipients,
+                        loaded.text_body,
+                    )
+                ).casefold()
+                if value not in searchable:
+                    continue
+                if not request.include_raw:
+                    loaded = replace(loaded, raw_eml=b"")
+                messages.append(
+                    replace(loaded, transport_id=transport_id, body_loaded=True)
+                )
+                if remaining is not None:
+                    remaining -= 1
+                    if remaining <= 0:
+                        break
+            return FetchResult(
+                AccountStatus.SUCCESS,
+                tuple(messages),
+                f"POP3 深度搜索完成，命中 {len(messages)} 封",
+            )
+        except Exception as exc:
+            status, detail = _classify_pop_error(exc)
+            return FetchResult(status, tuple(messages), detail)
+
     def close(self) -> None:
         connection, self._connection = self._connection, None
         if connection is not None:

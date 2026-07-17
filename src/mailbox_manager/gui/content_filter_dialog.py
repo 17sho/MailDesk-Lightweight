@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import csv
+import threading
 from pathlib import Path
 
+from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -20,12 +22,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mailbox_manager.domain.models import FetchRequest
+from mailbox_manager.gui.workers import DeepSearchWorker
 from mailbox_manager.services.content_filter import (
     ContentMatch,
     ContentMatchMode,
     extract_content_matches,
 )
-from mailbox_manager.storage.repositories import MessageRepository
+from mailbox_manager.services.fetch_service import FetchService
+from mailbox_manager.storage.repositories import AccountRepository, MessageRepository
 
 
 class ContentFilterDialog(QDialog):
@@ -35,12 +40,24 @@ class ContentFilterDialog(QDialog):
         *,
         current_account_id: int | None = None,
         current_account_email: str = "",
+        accounts: AccountRepository | None = None,
+        fetch_service: FetchService | None = None,
+        fetch_request: FetchRequest | None = None,
+        thread_pool: QThreadPool | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._messages = messages
         self._current_account_id = current_account_id
+        self._accounts = accounts
+        self._fetch_service = fetch_service
+        self._fetch_request = fetch_request or FetchRequest()
+        self._thread_pool = thread_pool
+        self._deep_worker: DeepSearchWorker | None = None
+        self._deep_stop_event = threading.Event()
         self._results: list[ContentMatch] = []
+        self._coverage_total = 0
+        self._coverage_loaded = 0
         self.setObjectName("contentFilterDialog")
         self.setWindowTitle("内容筛选与导出")
         self.resize(1080, 680)
@@ -53,6 +70,7 @@ class ContentFilterDialog(QDialog):
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
         help_label = QLabel(
+            "搜索全部本地邮件头和已加载正文；尚未点开的正文不会自动批量下载。"
             "只输出命中的链接或文字片段，不会复制、展示或导出整封邮件正文。"
             "通配符支持 * 和 ?，正则适合提取订单号、验证码等固定格式。"
         )
@@ -84,11 +102,18 @@ class ContentFilterDialog(QDialog):
             self.scope_combo.addItem(f"当前邮箱 · {label}", "current")
         self.scope_combo.addItem("全部邮箱", "all")
         self.scope_combo.setMaximumWidth(300)
+        self.scope_combo.currentIndexChanged.connect(self._refresh_coverage_label)
         controls.addWidget(self.scope_combo)
         self.filter_button = QPushButton("开始筛选")
         self.filter_button.setObjectName("primaryButton")
         self.filter_button.clicked.connect(self.run_filter)
         controls.addWidget(self.filter_button)
+        self.deep_filter_button = QPushButton("联网深度筛选")
+        self.deep_filter_button.setToolTip(
+            "由邮箱服务器搜索正文，只下载命中的邮件；POP3 邮箱需要逐封扫描"
+        )
+        self.deep_filter_button.clicked.connect(self.run_deep_filter)
+        controls.addWidget(self.deep_filter_button)
         layout.addLayout(controls)
 
         result_bar = QHBoxLayout()
@@ -133,6 +158,10 @@ class ContentFilterDialog(QDialog):
         close_button.clicked.connect(self.accept)
         actions.addWidget(close_button)
         layout.addLayout(actions)
+        self._refresh_coverage_label()
+        self.query_input.textChanged.connect(self._refresh_deep_button)
+        self.mode_combo.currentIndexChanged.connect(self._refresh_deep_button)
+        self._refresh_deep_button()
 
     @property
     def results(self) -> tuple[ContentMatch, ...]:
@@ -148,6 +177,8 @@ class ContentFilterDialog(QDialog):
                 else None
             )
             hits = self._messages.list_with_accounts(account_id=account_id)
+            self._coverage_total = len(hits)
+            self._coverage_loaded = sum(hit.message.body_loaded for hit in hits)
             self._results = extract_content_matches(hits, query, mode)
         except ValueError as exc:
             QMessageBox.warning(self, "筛选条件无效", str(exc))
@@ -174,11 +205,142 @@ class ContentFilterDialog(QDialog):
                 if column == 3:
                     item.setToolTip(value)
                 self.table.setItem(row, column, item)
-        self.result_label.setText(f"共找到 {len(self._results)} 条匹配内容")
+        coverage = (
+            f"已搜索 {self._coverage_loaded}/{self._coverage_total} 封正文"
+            if self._coverage_total
+            else "当前范围没有本地邮件"
+        )
+        unloaded = max(0, self._coverage_total - self._coverage_loaded)
+        pending = f"；另有 {unloaded} 封正文尚未加载" if unloaded else ""
+        self.result_label.setText(
+            f"共找到 {len(self._results)} 条匹配内容 · {coverage}{pending}"
+        )
         enabled = bool(self._results)
         self.copy_button.setEnabled(enabled)
         self.export_csv_button.setEnabled(enabled)
         self.export_txt_button.setEnabled(enabled)
+
+    def _refresh_coverage_label(self, _index: int = -1) -> None:
+        account_id = (
+            self._current_account_id
+            if self.scope_combo.currentData() == "current"
+            else None
+        )
+        self._coverage_total, self._coverage_loaded = self._messages.body_load_counts(
+            account_id=account_id
+        )
+        unloaded = max(0, self._coverage_total - self._coverage_loaded)
+        if not self._coverage_total:
+            self.result_label.setText("当前范围没有本地邮件")
+        elif unloaded:
+            self.result_label.setText(
+                f"当前范围 {self._coverage_total} 封邮件，已加载正文 "
+                f"{self._coverage_loaded} 封，尚未加载 {unloaded} 封"
+            )
+        else:
+            self.result_label.setText(
+                f"当前范围 {self._coverage_total} 封邮件，正文均已加载"
+            )
+        self._refresh_deep_button()
+
+    def _refresh_deep_button(self, _value: object = None) -> None:
+        if self._deep_worker is not None:
+            return
+        available = (
+            self._accounts is not None
+            and self._fetch_service is not None
+            and self._thread_pool is not None
+            and self._coverage_loaded < self._coverage_total
+            and bool(self.query_input.text().strip())
+            and self.mode_combo.currentData() == ContentMatchMode.LITERAL.value
+        )
+        self.deep_filter_button.setEnabled(available)
+
+    def run_deep_filter(self) -> None:
+        if self._deep_worker is not None:
+            self._deep_stop_event.set()
+            self.deep_filter_button.setText("正在停止…")
+            self.deep_filter_button.setEnabled(False)
+            return
+        query = self.query_input.text().strip()
+        if not query:
+            QMessageBox.warning(self, "深度筛选", "请先输入需要搜索的文字")
+            return
+        if self.mode_combo.currentData() != ContentMatchMode.LITERAL.value:
+            QMessageBox.information(
+                self,
+                "深度筛选",
+                "联网深度筛选当前只支持“精确包含”；通配符和正则仍筛选本地正文。",
+            )
+            return
+        if self._accounts is None or self._fetch_service is None or self._thread_pool is None:
+            return
+        if self.scope_combo.currentData() == "current":
+            account = (
+                self._accounts.get(self._current_account_id)
+                if self._current_account_id is not None
+                else None
+            )
+            selected_accounts = [account] if account is not None else []
+        else:
+            selected_accounts = self._accounts.list_all()
+        if not selected_accounts:
+            QMessageBox.information(self, "深度筛选", "当前范围没有可搜索的邮箱账号")
+            return
+        answer = QMessageBox.question(
+            self,
+            "确认联网深度筛选",
+            f"将连接 {len(selected_accounts)} 个邮箱，在服务器中搜索“{query[:80]}”。\n\n"
+            "IMAP 和 Microsoft Graph 只下载命中的邮件；POP3 不支持服务端搜索，"
+            "需要逐封扫描。是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._deep_stop_event = threading.Event()
+        worker = DeepSearchWorker(
+            self._fetch_service,
+            selected_accounts,
+            query,
+            self._fetch_request,
+            self._deep_stop_event,
+        )
+        self._deep_worker = worker
+        worker.signals.progress.connect(self._deep_search_progress)
+        worker.signals.result.connect(self._deep_search_result)
+        worker.signals.finished.connect(self._deep_search_finished)
+        self.filter_button.setEnabled(False)
+        self.deep_filter_button.setText("停止深度筛选")
+        self.deep_filter_button.setEnabled(True)
+        self._thread_pool.start(worker)
+
+    def _deep_search_progress(self, completed: int, total: int, email: str) -> None:
+        self.result_label.setText(
+            f"联网深度筛选 {completed}/{total} · {email}"
+        )
+
+    def _deep_search_result(self, summary: object) -> None:
+        values = summary if isinstance(summary, dict) else {}
+        self._refresh_coverage_label()
+        self.run_filter()
+        errors = values.get("errors", ())
+        suffix = f"；{len(errors)} 个账号失败" if errors else ""
+        cancelled = "；任务已停止" if values.get("cancelled") else ""
+        self.result_label.setText(
+            self.result_label.text()
+            + f" · 服务器命中 {int(values.get('matches', 0))} 封{suffix}{cancelled}"
+        )
+
+    def _deep_search_finished(self) -> None:
+        self._deep_worker = None
+        self.filter_button.setEnabled(True)
+        self.deep_filter_button.setText("联网深度筛选")
+        self._refresh_deep_button()
+
+    def done(self, result: int) -> None:
+        self._deep_stop_event.set()
+        super().done(result)
 
     def copy_results(self) -> None:
         if not self._results:

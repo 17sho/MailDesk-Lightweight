@@ -533,6 +533,26 @@ class MessageRepository:
             attachments = self._attachments_for_messages(connection, [message_id])
         return self._to_message(row, attachments.get(message_id, ()))
 
+    def find_by_transport_id(
+        self, account_id: int, transport_id: str
+    ) -> MailMessage | None:
+        if account_id <= 0 or not transport_id:
+            return None
+        with self._database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM messages
+                WHERE account_id = ? AND transport_id = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (account_id, transport_id),
+            ).fetchone()
+            if row is None:
+                return None
+            message_id = int(row["id"])
+            attachments = self._attachments_for_messages(connection, [message_id])
+        return self._to_message(row, attachments.get(message_id, ()))
+
     def list_attachments(
         self, message_id: int, *, include_content: bool = False
     ) -> list[MailAttachment]:
@@ -650,6 +670,27 @@ class MessageRepository:
             )
             for row in rows
         ]
+
+    def body_load_counts(self, *, account_id: int | None = None) -> tuple[int, int]:
+        """Return total messages and messages whose complete body is cached."""
+
+        params: tuple[object, ...] = ()
+        where = ""
+        if account_id is not None:
+            where = "WHERE account_id = ?"
+            params = (account_id,)
+        with self._database.connect() as connection:
+            row = connection.execute(
+                f"""
+                SELECT COUNT(*) AS total,
+                       COALESCE(SUM(CASE WHEN body_loaded = 1 THEN 1 ELSE 0 END), 0)
+                           AS loaded
+                FROM messages
+                {where}
+                """,
+                params,
+            ).fetchone()
+        return int(row["total"]), int(row["loaded"])
 
     @staticmethod
     def _replace_attachments(

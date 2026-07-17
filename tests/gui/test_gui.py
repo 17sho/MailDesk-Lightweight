@@ -1124,6 +1124,56 @@ def test_message_search_and_filtered_copy_are_scoped(qtbot, tmp_path) -> None:
     assert "private footer" not in copied
 
 
+def test_content_filter_reports_loaded_body_coverage(qtbot, tmp_path) -> None:
+    database = Database(tmp_path / "content-filter-coverage.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"H" * 32))
+    accounts.add_many([_account()])
+    stored = accounts.list_all()[0]
+    messages = MessageRepository(database)
+    messages.add_many(
+        stored.account_id,
+        (
+            MailMessage(
+                provider_message_id="loaded",
+                folder="INBOX",
+                text_body="如果您更改了登录设置，请重新确认。",
+                body_loaded=True,
+            ),
+            MailMessage(
+                provider_message_id="header-only",
+                folder="INBOX",
+                subject="尚未加载正文",
+                body_loaded=False,
+            ),
+        ),
+    )
+
+    dialog = ContentFilterDialog(
+        messages,
+        current_account_id=stored.account_id,
+        current_account_email=stored.email,
+    )
+    qtbot.addWidget(dialog)
+
+    assert "已加载正文 1 封" in dialog.result_label.text()
+    assert "尚未加载 1 封" in dialog.result_label.text()
+
+    dialog.query_input.setText("如果您更改了")
+    dialog.run_filter()
+
+    assert dialog.table.rowCount() == 1
+    assert "已搜索 1/2 封正文" in dialog.result_label.text()
+
+    window = MainWindow(accounts, messages)
+    qtbot.addWidget(window)
+    window._account_row_clicked(window.account_model.index(0, 1))
+    window.message_search_input.setText("本地没有的正文内容")
+    window.search_messages()
+
+    assert "1 封正文尚未加载" in window.message_context_label.text()
+
+
 def test_copy_totp_places_only_current_code_on_clipboard(qtbot, tmp_path) -> None:
     database = Database(tmp_path / "totp.db")
     database.initialize()

@@ -255,6 +255,61 @@ class OutlookGraphClient(EmailClientBase):
             )
         return loaded
 
+    def search_messages(self, query: str, request: FetchRequest) -> FetchResult:
+        """Search Graph message content and load only matching messages."""
+
+        messages: list[MailMessage] = []
+        try:
+            remaining: int | None = None if request.unlimited else request.max_messages
+            escaped_query = query.strip().replace("\\", "\\\\").replace('"', '\\"')
+            if not escaped_query:
+                raise ValueError("深度搜索内容不能为空")
+            url = f"{GRAPH_ROOT}/me/messages"
+            first_page = True
+            seen_urls: set[str] = set()
+            while url and (remaining is None or remaining > 0):
+                if url in seen_urls:
+                    break
+                seen_urls.add(url)
+                payload = self._get(
+                    url,
+                    {
+                        "$search": f'"{escaped_query}"',
+                        "$top": 50 if remaining is None else min(remaining, 50),
+                        "$select": (
+                            "id,subject,from,toRecipients,receivedDateTime,body,"
+                            "internetMessageHeaders,hasAttachments"
+                        ),
+                    }
+                    if first_page
+                    else None,
+                )
+                first_page = False
+                for item in payload.get("value", []):
+                    if not isinstance(item, dict):
+                        continue
+                    messages.append(
+                        self._parse_item(item, "搜索结果", request, load_content=True)
+                    )
+                    if remaining is not None:
+                        remaining -= 1
+                        if remaining <= 0:
+                            break
+                next_link = payload.get("@odata.nextLink")
+                url = (
+                    next_link
+                    if isinstance(next_link, str) and next_link.startswith(GRAPH_ROOT)
+                    else ""
+                )
+            return FetchResult(
+                AccountStatus.SUCCESS,
+                tuple(messages),
+                f"Graph 深度搜索完成，命中 {len(messages)} 封",
+            )
+        except Exception as exc:
+            status, detail = _classify_graph_error(exc)
+            return FetchResult(status, tuple(messages), detail)
+
     def _parse_item(
         self,
         item: dict[str, object],

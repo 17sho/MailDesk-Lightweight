@@ -10,9 +10,11 @@ from mailbox_manager.domain.models import (
     EmailAccount,
     FetchRequest,
     FetchResult,
+    MailMessage,
     ProtocolType,
 )
 from mailbox_manager.gui.workers import (
+    DeepSearchWorker,
     FetchWorker,
     UpdateCheckWorker,
     UpdateDownloadWorker,
@@ -61,6 +63,39 @@ def test_fetch_worker_honors_stop_before_network_call(qtbot) -> None:
         worker.run()
 
     assert statuses == [AccountStatus.CANCELLED]
+
+
+def test_deep_search_worker_reports_matches_and_progress(qtbot) -> None:
+    class SearchService:
+        def search_account(self, _account, query, _request):
+            assert query == "验证码"
+            return FetchResult(
+                AccountStatus.SUCCESS,
+                messages=(
+                    MailMessage("match", "INBOX", text_body="验证码 123456"),
+                ),
+            )
+
+    worker = DeepSearchWorker(
+        SearchService(),  # type: ignore[arg-type]
+        [_graph_account()],
+        "验证码",
+        FetchRequest(),
+        threading.Event(),
+    )
+    summaries: list[dict[str, object]] = []
+    progress: list[tuple[int, int, str]] = []
+    worker.signals.result.connect(summaries.append)
+    worker.signals.progress.connect(
+        lambda done, total, email: progress.append((done, total, email))
+    )
+
+    with qtbot.waitSignal(worker.signals.finished, timeout=1000):
+        worker.run()
+
+    assert summaries[0]["matches"] == 1
+    assert summaries[0]["errors"] == ()
+    assert progress[-1][:2] == (1, 1)
 
 
 class FakeUpdateService:

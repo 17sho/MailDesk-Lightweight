@@ -7,6 +7,7 @@ from enum import StrEnum
 from html.parser import HTMLParser
 
 from mailbox_manager.domain.models import MailMessage, MessageSearchHit
+from mailbox_manager.mail.parser import html_to_text
 
 MAX_QUERY_LENGTH = 500
 MAX_SNIPPET_LENGTH = 280
@@ -135,12 +136,20 @@ def _matching_text_snippets(
     exact_match: bool,
 ) -> list[str]:
     message = hit.message
+    body_lines = message.text_body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    html_source = message.html_body or message.web_html_body
+    if html_source and not message.text_body.strip():
+        visible_html = html_to_text(html_source)
+        if visible_html.strip():
+            body_lines.extend(
+                visible_html.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            )
     source_lines = [
         hit.account_email,
         message.subject,
         message.sender,
         *message.recipients,
-        *message.text_body.replace("\r\n", "\n").replace("\r", "\n").split("\n"),
+        *body_lines,
     ]
     snippets: list[str] = []
     for raw_line in source_lines:

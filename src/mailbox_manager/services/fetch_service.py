@@ -32,6 +32,8 @@ class FetchClient(Protocol):
 
     def fetch_message(self, message: MailMessage, request: FetchRequest) -> MailMessage: ...
 
+    def search_messages(self, query: str, request: FetchRequest) -> FetchResult: ...
+
     def close(self) -> None: ...
 
 
@@ -305,6 +307,113 @@ class FetchService:
             return persisted or loaded
         except ProxyRouteError as exc:
             raise RuntimeError(str(exc)) from exc
+
+    def search_account(
+        self,
+        account: EmailAccount,
+        query: str,
+        request: FetchRequest,
+    ) -> FetchResult:
+        """Run an explicit provider-side literal search and cache matching bodies."""
+
+        if account.account_id is None:
+            raise ValueError("账号必须先保存后才能深度搜索")
+        value = query.strip()
+        if not value:
+            raise ValueError("深度搜索内容不能为空")
+        client = None
+        reused_session = False
+        account_lock = self._message_session_lock(account.account_id)
+        try:
+            with account_lock:
+                session = self._reusable_message_session(account)
+                if session is not None:
+                    client = session.client
+                    reused_session = True
+                else:
+                    route_factory = (
+                        self._client_factory
+                        if isinstance(self._client_factory, RouteAwareClientFactory)
+                        else None
+                    )
+                    route = route_factory.resolve_route(account) if route_factory else None
+                    identity = (
+                        route.identity
+                        if route is not None
+                        else f"proxy:{account.proxy_id}" if account.proxy_id else "direct"
+                    )
+                    guard = (
+                        self._throttle.slot(identity, str(account.account_id))
+                        if self._throttle is not None
+                        else nullcontext()
+                    )
+                    with guard:
+                        client = (
+                            route_factory.create_for_route(account, route)
+                            if route_factory is not None and route is not None
+                            else self._client_factory(account)
+                        )
+                searcher = getattr(client, "search_messages", None)
+                if not callable(searcher):
+                    raise RuntimeError("当前邮箱协议不支持联网深度搜索")
+                result = searcher(value, request)
+                if result.status is not AccountStatus.SUCCESS:
+                    if reused_session:
+                        self._discard_message_session(
+                            account.account_id, expected_client=client
+                        )
+                    else:
+                        _close_fetch_client(client, force=True)
+                    client = None
+                    return result
+                if reused_session:
+                    self._touch_message_session(account.account_id, client)
+                else:
+                    self._store_message_session(account, client)
+
+            normalized: list[MailMessage] = []
+            for message in result.messages:
+                existing = self._messages.find_by_transport_id(
+                    account.account_id, message.transport_id
+                )
+                if existing is not None:
+                    message = replace(
+                        message,
+                        provider_message_id=existing.provider_message_id,
+                        folder=existing.folder,
+                        message_id=existing.message_id,
+                        account_id=account.account_id,
+                    )
+                else:
+                    message = replace(message, account_id=account.account_id)
+                if self._eml_store is not None and message.raw_eml:
+                    message = replace(
+                        message,
+                        eml_path=self._eml_store.save(account.account_id, message),
+                    )
+                normalized.append(message)
+            if normalized:
+                self._messages.add_many(account.account_id, normalized)
+            if self._audit is not None:
+                self._audit.record(
+                    "deep_search",
+                    "success",
+                    f"{account.email} matches={len(normalized)}",
+                    account.account_id,
+                )
+            return replace(result, messages=tuple(normalized))
+        except ProxyRouteError as exc:
+            return FetchResult(AccountStatus.NETWORK_ERROR, detail=str(exc))
+        except Exception:
+            if client is not None:
+                self._discard_message_session(
+                    account.account_id, expected_client=client
+                )
+                _close_fetch_client(client, force=True)
+            return FetchResult(
+                AccountStatus.UNKNOWN_ERROR,
+                detail="联网深度搜索失败，请检查邮箱连接和搜索条件",
+            )
 
     def close_message_sessions(self, account_id: int | None = None) -> None:
         """Discard cached message clients without waiting for a protocol logout."""

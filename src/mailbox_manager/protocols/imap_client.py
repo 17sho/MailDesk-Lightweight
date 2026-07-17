@@ -264,6 +264,75 @@ class ImapClient(EmailClientBase):
                 raise
         raise RuntimeError("邮件正文加载失败")
 
+    def search_messages(self, query: str, request: FetchRequest) -> FetchResult:
+        """Use IMAP server-side TEXT search and download only matching messages."""
+
+        messages: list[MailMessage] = []
+        try:
+            connection = self._connect()
+            remaining: int | None = None if request.unlimited else request.max_messages
+            folders = list(request.folders)
+            if request.include_special_folders:
+                existing = {folder.casefold() for folder in folders}
+                for candidate in self.list_folders():
+                    if (
+                        _is_special_folder(candidate)
+                        and candidate.name.casefold() not in existing
+                    ):
+                        folders.append(candidate.name)
+                        existing.add(candidate.name.casefold())
+            criterion = _quoted_imap_search_text(query)
+            for folder in folders:
+                if remaining is not None and remaining <= 0:
+                    break
+                self._stage = "select_folder"
+                status, _ = connection.select(folder, readonly=True)
+                if status != "OK":
+                    continue
+                self._stage = "search_content"
+                status, search_data = connection.uid(
+                    "search", "CHARSET", "UTF-8", "TEXT", criterion
+                )
+                if status != "OK" or not search_data:
+                    continue
+                identifiers = list(reversed(search_data[0].split()))
+                if remaining is not None:
+                    identifiers = identifiers[:remaining]
+                for offset in range(0, len(identifiers), IMAP_FETCH_BATCH_SIZE):
+                    batch = identifiers[offset : offset + IMAP_FETCH_BATCH_SIZE]
+                    self._stage = "download_matches"
+                    for identifier, raw in _fetch_uid_messages(connection, batch):
+                        loaded = parse_email_message(
+                            raw,
+                            folder=folder,
+                            keywords=request.keywords,
+                            custom_pattern=request.custom_pattern,
+                        )
+                        if not request.include_raw:
+                            loaded = replace(loaded, raw_eml=b"")
+                        messages.append(
+                            replace(
+                                loaded,
+                                transport_id=_uid_text(identifier),
+                                body_loaded=True,
+                            )
+                        )
+                        if remaining is not None:
+                            remaining -= 1
+                            if remaining <= 0:
+                                break
+                    if remaining is not None and remaining <= 0:
+                        break
+            self._stage = "ready"
+            return FetchResult(
+                AccountStatus.SUCCESS,
+                tuple(messages),
+                f"服务器深度搜索完成，命中 {len(messages)} 封",
+            )
+        except Exception as exc:
+            status, detail = _classify_imap_error(exc, self._stage)
+            return FetchResult(status, tuple(messages), detail)
+
     def close(self) -> None:
         self._disconnect(abort=False)
 
@@ -319,6 +388,14 @@ def _fetch_uid_messages(
     """Fetch a small full-message UID batch."""
 
     return _fetch_uid_payloads(connection, identifiers, "(UID RFC822)")
+
+
+def _quoted_imap_search_text(query: str) -> bytes:
+    value = query.strip()
+    if not value:
+        raise ValueError("深度搜索内容不能为空")
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return b'"' + escaped.encode("utf-8") + b'"'
 
 
 def _fetch_uid_headers(

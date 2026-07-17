@@ -2172,13 +2172,26 @@ class MainWindow(QMainWindow):
             )
             return
         hits = self._messages.search(query, account_id=account_id)
+        total_messages, loaded_bodies = self._messages.body_load_counts(
+            account_id=account_id
+        )
+        unloaded_bodies = max(0, total_messages - loaded_bodies)
+        pending_note = (
+            f"；另有 {unloaded_bodies} 封正文尚未加载"
+            if unloaded_bodies
+            else ""
+        )
         self._set_displayed_messages(
             [hit.message for hit in hits],
             [hit.account_email for hit in hits],
-            empty_text=f"没有找到包含“{query[:80]}”的本地邮件",
+            empty_text=f"没有找到包含“{query[:80]}”的本地邮件{pending_note}",
             count_suffix="条",
         )
-        self.statusBar().showMessage(f"本地邮件搜索完成：{len(hits)} 条结果", 5000)
+        self.statusBar().showMessage(
+            f"本地邮件搜索完成：{len(hits)} 条结果；"
+            f"已搜索 {loaded_bodies}/{total_messages} 封正文{pending_note}",
+            7000,
+        )
 
     def _message_search_text_changed(self, text: str) -> None:
         if not text.strip():
@@ -2203,6 +2216,10 @@ class MainWindow(QMainWindow):
             self._messages,
             current_account_id=account.account_id if account else None,
             current_account_email=account.email if account else "",
+            accounts=self._accounts,
+            fetch_service=self._fetch_service,
+            fetch_request=self._build_fetch_request(),
+            thread_pool=self._pool,
             parent=self,
         )
         self._content_filter_dialog = dialog

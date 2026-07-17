@@ -94,6 +94,60 @@ class MessageLoadWorker(QRunnable):
             self.signals.finished.emit(self.message_id)
 
 
+class DeepSearchSignals(QObject):
+    progress = Signal(int, int, str)
+    result = Signal(object)
+    finished = Signal()
+
+
+class DeepSearchWorker(QRunnable):
+    """Search message bodies remotely without blocking the dialog."""
+
+    def __init__(
+        self,
+        service: FetchService,
+        accounts: list[EmailAccount],
+        query: str,
+        request: FetchRequest,
+        stop_event: threading.Event,
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.accounts = accounts
+        self.query = query
+        self.request = request
+        self.stop_event = stop_event
+        self.signals = DeepSearchSignals()
+
+    @Slot()
+    def run(self) -> None:
+        matches = 0
+        errors: list[str] = []
+        completed = 0
+        total = len(self.accounts)
+        for account in self.accounts:
+            if self.stop_event.is_set():
+                break
+            self.signals.progress.emit(completed, total, account.email)
+            result = self.service.search_account(account, self.query, self.request)
+            if result.status is AccountStatus.SUCCESS:
+                matches += len(result.messages)
+            else:
+                errors.append(f"{account.email}：{result.detail}")
+            completed += 1
+            self.signals.progress.emit(completed, total, account.email)
+        self.signals.result.emit(
+            {
+                "matches": matches,
+                "errors": tuple(errors),
+                "completed": completed,
+                "total": total,
+                "cancelled": self.stop_event.is_set(),
+            }
+        )
+        self.signals.finished.emit()
+
+
 class SmtpProbeSignals(QObject):
     result = Signal(int, object, str)
     finished = Signal(int)
