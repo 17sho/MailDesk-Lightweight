@@ -1544,6 +1544,10 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
+        close_sessions = getattr(self._fetch_service, "close_message_sessions", None)
+        for account_id in account_ids:
+            if callable(close_sessions):
+                close_sessions(account_id)
         deleted = self._accounts.delete_many(account_ids)
         if self._eml_store is not None:
             for account_id in account_ids:
@@ -1686,6 +1690,10 @@ class MainWindow(QMainWindow):
                 dashboard.set_proxy_toggle_enabled(True)
 
         self._proxy_fetch_enabled = requested_state
+        if requested_state != previous_state:
+            close_sessions = getattr(self._fetch_service, "close_message_sessions", None)
+            if callable(close_sessions):
+                close_sessions()
         if dashboard is not None:
             dashboard.set_proxy_state(requested_state)
         if notify:
@@ -3908,6 +3916,9 @@ class MainWindow(QMainWindow):
 
     def _shutdown_before_close(self) -> None:
         self.stop_fetch()
+        close_sessions = getattr(self._fetch_service, "close_message_sessions", None)
+        if callable(close_sessions):
+            close_sessions()
         if self._update_download_worker is not None:
             self._update_download_worker.cancel()
         self._translation_generation += 1

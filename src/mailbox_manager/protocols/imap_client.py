@@ -267,6 +267,11 @@ class ImapClient(EmailClientBase):
     def close(self) -> None:
         self._disconnect(abort=False)
 
+    def abort(self) -> None:
+        """Close the socket immediately when a cached session becomes unusable."""
+
+        self._disconnect(abort=True)
+
     def _disconnect(self, *, abort: bool) -> None:
         connection, self._connection = self._connection, None
         if connection is not None:

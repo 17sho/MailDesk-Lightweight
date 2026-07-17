@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from mailbox_manager.domain.models import (
     AccountStatus,
     EmailAccount,
@@ -24,6 +26,8 @@ class FakeClient:
         self.result = result
         self.loaded_message = loaded_message
         self.closed = False
+        self.aborted = False
+        self.fetch_message_calls = 0
         self.request: FetchRequest | None = None
 
     def fetch_messages(self, request: FetchRequest) -> FetchResult:
@@ -31,12 +35,17 @@ class FakeClient:
         return self.result
 
     def fetch_message(self, _message: MailMessage, request: FetchRequest) -> MailMessage:
+        self.fetch_message_calls += 1
         self.request = request
         if self.loaded_message is None:
             raise RuntimeError("no lazy body configured")
         return self.loaded_message
 
     def close(self) -> None:
+        self.closed = True
+
+    def abort(self) -> None:
+        self.aborted = True
         self.closed = True
 
 
@@ -70,9 +79,236 @@ def test_fetch_service_persists_messages_and_updates_account_status(tmp_path) ->
     result = service.fetch_account(stored, FetchRequest())
 
     assert result.status is AccountStatus.SUCCESS
-    assert client.closed is True
+    assert client.closed is False
     assert accounts.get(stored.account_id).status is AccountStatus.SUCCESS  # type: ignore[arg-type]
     assert MessageRepository(database).list_for_account(stored.account_id)[0].subject == "验证码"  # type: ignore[arg-type]
+    service.close_message_sessions()
+    assert client.aborted is True
+
+
+def test_fetch_service_reuses_list_session_for_first_message_body(tmp_path) -> None:
+    database = Database(tmp_path / "list-to-body-session.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"L" * 32))
+    accounts.add_many(
+        [
+            EmailAccount(
+                email="list-session@example.com",
+                provider="custom",
+                protocol=ProtocolType.IMAP,
+                host="imap.example.com",
+                port=993,
+                secret="secret",
+            )
+        ]
+    )
+    account = accounts.list_all()[0]
+    assert account.account_id is not None
+    header = MailMessage(
+        "provider-1",
+        "INBOX",
+        transport_id="1",
+        body_loaded=False,
+    )
+    loaded = MailMessage(
+        "server-provider",
+        "INBOX",
+        transport_id="1",
+        text_body="完整正文",
+        body_loaded=True,
+    )
+    client = FakeClient(
+        FetchResult(AccountStatus.SUCCESS, (header,)),
+        loaded,
+    )
+    factory_calls = 0
+
+    def factory(_account: EmailAccount) -> FakeClient:
+        nonlocal factory_calls
+        factory_calls += 1
+        return client
+
+    messages = MessageRepository(database)
+    service = FetchService(accounts, messages, client_factory=factory)
+
+    service.fetch_account(account, FetchRequest())
+    stored_header = messages.list_for_account(account.account_id)[0]
+    result = service.load_message(account, stored_header, FetchRequest())
+
+    assert result.body_loaded is True
+    assert result.text_body == "完整正文"
+    assert factory_calls == 1
+    assert client.fetch_message_calls == 1
+    assert client.closed is False
+    service.close_message_sessions()
+    assert client.aborted is True
+
+
+def test_fetch_service_reuses_one_message_session_per_account(tmp_path) -> None:
+    database = Database(tmp_path / "message-session.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"S" * 32))
+    accounts.add_many(
+        [
+            EmailAccount(
+                email="session@example.com",
+                provider="custom",
+                protocol=ProtocolType.IMAP,
+                host="imap.example.com",
+                port=993,
+                secret="secret",
+            )
+        ]
+    )
+    account = accounts.list_all()[0]
+    assert account.account_id is not None
+    messages = MessageRepository(database)
+    messages.add_many(
+        account.account_id,
+        (
+            MailMessage("provider-1", "INBOX", transport_id="1", body_loaded=False),
+            MailMessage("provider-2", "INBOX", transport_id="2", body_loaded=False),
+        ),
+    )
+    headers = messages.list_for_account(account.account_id)
+    client = FakeClient(
+        FetchResult(AccountStatus.SUCCESS),
+        MailMessage(
+            "server-provider",
+            "INBOX",
+            transport_id="server-id",
+            text_body="完整正文",
+            body_loaded=True,
+        ),
+    )
+    factory_calls = 0
+
+    def factory(_account: EmailAccount) -> FakeClient:
+        nonlocal factory_calls
+        factory_calls += 1
+        return client
+
+    service = FetchService(accounts, messages, client_factory=factory)
+
+    service.load_message(account, headers[0], FetchRequest())
+    service.load_message(account, headers[1], FetchRequest())
+
+    assert factory_calls == 1
+    assert client.fetch_message_calls == 2
+    assert client.closed is False
+    service.close_message_sessions()
+    assert client.aborted is True
+
+
+def test_fetch_service_replaces_expired_message_session(tmp_path) -> None:
+    database = Database(tmp_path / "expired-message-session.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"T" * 32))
+    accounts.add_many(
+        [
+            EmailAccount(
+                email="expired@example.com",
+                provider="custom",
+                protocol=ProtocolType.IMAP,
+                host="imap.example.com",
+                port=993,
+                secret="secret",
+            )
+        ]
+    )
+    account = accounts.list_all()[0]
+    assert account.account_id is not None
+    messages = MessageRepository(database)
+    messages.add_many(
+        account.account_id,
+        (MailMessage("provider", "INBOX", transport_id="9", body_loaded=False),),
+    )
+    header = messages.list_for_account(account.account_id)[0]
+    now = [0.0]
+    clients: list[FakeClient] = []
+
+    def factory(_account: EmailAccount) -> FakeClient:
+        client = FakeClient(
+            FetchResult(AccountStatus.SUCCESS),
+            MailMessage(
+                "server-provider",
+                "INBOX",
+                transport_id="9",
+                text_body="完整正文",
+                body_loaded=True,
+            ),
+        )
+        clients.append(client)
+        return client
+
+    service = FetchService(
+        accounts,
+        messages,
+        client_factory=factory,
+        message_session_ttl=10,
+        clock=lambda: now[0],
+    )
+    service.load_message(account, header, FetchRequest())
+    now[0] = 11.0
+    service.load_message(account, header, FetchRequest())
+
+    assert len(clients) == 2
+    assert clients[0].aborted is True
+    assert clients[1].closed is False
+    service.close_message_sessions()
+    assert clients[1].aborted is True
+
+
+def test_fetch_service_discards_failed_reused_message_session(tmp_path) -> None:
+    database = Database(tmp_path / "failed-message-session.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"F" * 32))
+    accounts.add_many(
+        [
+            EmailAccount(
+                email="failed-session@example.com",
+                provider="custom",
+                protocol=ProtocolType.IMAP,
+                host="imap.example.com",
+                port=993,
+                secret="secret",
+            )
+        ]
+    )
+    account = accounts.list_all()[0]
+    assert account.account_id is not None
+    messages = MessageRepository(database)
+    messages.add_many(
+        account.account_id,
+        (MailMessage("provider", "INBOX", transport_id="10", body_loaded=False),),
+    )
+    header = messages.list_for_account(account.account_id)[0]
+    body = MailMessage(
+        "server-provider",
+        "INBOX",
+        transport_id="10",
+        text_body="完整正文",
+        body_loaded=True,
+    )
+    first = FakeClient(FetchResult(AccountStatus.SUCCESS), body)
+    replacement = FakeClient(FetchResult(AccountStatus.SUCCESS), body)
+    clients = iter((first, replacement))
+    service = FetchService(
+        accounts,
+        messages,
+        client_factory=lambda _account: next(clients),
+    )
+
+    service.load_message(account, header, FetchRequest())
+    first.loaded_message = None
+    with pytest.raises(RuntimeError, match="no lazy body configured"):
+        service.load_message(account, header, FetchRequest())
+    assert first.aborted is True
+
+    service.load_message(account, header, FetchRequest())
+    assert replacement.fetch_message_calls == 1
+    assert replacement.closed is False
+    service.close_message_sessions()
 
 
 def test_fetch_service_passes_persisted_transport_ids_to_client(tmp_path) -> None:
@@ -166,7 +402,10 @@ def test_fetch_service_loads_and_persists_one_selected_message(tmp_path) -> None
     assert loaded.body_loaded is True
     assert loaded.text_body == "点击后加载的完整正文 123456"
     assert messages.get(header.message_id).body_loaded is True  # type: ignore[arg-type,union-attr]
+    assert client.closed is False
+    service.close_message_sessions(account.account_id)
     assert client.closed is True
+    assert client.aborted is True
 
 
 def test_fetch_service_persists_failure_status_without_messages(tmp_path) -> None:

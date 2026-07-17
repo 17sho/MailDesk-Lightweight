@@ -210,6 +210,8 @@ def test_fetch_service_keeps_plain_callable_factory_compatibility() -> None:
 
     assert result.status is AccountStatus.SUCCESS
     assert throttle.identities == ["proxy:9"]
+    assert client.closed is False
+    service.close_message_sessions()
     assert client.closed is True
 
 
