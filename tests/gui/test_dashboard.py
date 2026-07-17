@@ -263,3 +263,21 @@ def test_dashboard_charts_render_without_qtcharts_runtime(qtbot) -> None:
 
     assert dashboard.health_chart.grab().isNull() is False
     assert dashboard.rate_chart.grab().isNull() is False
+
+
+def test_health_chart_uses_space_efficient_responsive_layout(qtbot) -> None:
+    dashboard = _dashboard(qtbot)
+    chart = dashboard.health_chart
+
+    chart.resize(620, 210)
+    assert chart.health_layout_mode == "horizontal"
+    assert chart.health_total == 0
+    assert chart.grab().isNull() is False
+
+    chart.set_health_data((("连接成功", 8), ("鉴权失败", 2), ("连接超时", 1)))
+    assert chart.health_total == 11
+    assert chart.grab().isNull() is False
+
+    chart.resize(320, 190)
+    assert chart.health_layout_mode == "stacked"
+    assert chart.grab().isNull() is False

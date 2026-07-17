@@ -170,12 +170,19 @@ class _DashboardChart(QWidget):
     """Small native chart used instead of shipping the QtCharts runtime."""
 
     _COLORS = (
-        "#3b82f6",
         "#10b981",
-        "#f59e0b",
         "#ef4444",
+        "#f59e0b",
+        "#3b82f6",
         "#8b5cf6",
         "#64748b",
+    )
+    _HEALTH_COLOR_HINTS = (
+        (("成功", "正常", "已连接"), "#10b981"),
+        (("鉴权", "密码", "失效", "封禁"), "#ef4444"),
+        (("超时", "限流", "等待"), "#f59e0b"),
+        (("连接", "网络"), "#3b82f6"),
+        (("取消", "停止"), "#8b5cf6"),
     )
 
     def __init__(self, chart_id: str) -> None:
@@ -202,6 +209,14 @@ class _DashboardChart(QWidget):
         return 2 if len(self._trend_points) == 1 else len(self._trend_points)
 
     @property
+    def health_total(self) -> int:
+        return sum(count for _label, count, _color in self._health_segments)
+
+    @property
+    def health_layout_mode(self) -> str:
+        return "horizontal" if self.width() >= 430 and self.height() >= 150 else "stacked"
+
+    @property
     def y_max(self) -> int:
         maximum = max((count for _timestamp, count in self._trend_points), default=0)
         return max(1, maximum + max(1, round(maximum * 0.15)))
@@ -212,11 +227,18 @@ class _DashboardChart(QWidget):
 
     def set_health_data(self, values: Sequence[tuple[str, int]]) -> None:
         self._health_segments = tuple(
-            (label, count, QColor(self._COLORS[index % len(self._COLORS)]))
+            (label, count, self._health_color(label, index))
             for index, (label, count) in enumerate(values)
             if count > 0
         )
         self.update()
+
+    @classmethod
+    def _health_color(cls, label: str, index: int) -> QColor:
+        for hints, color in cls._HEALTH_COLOR_HINTS:
+            if any(hint in label for hint in hints):
+                return QColor(color)
+        return QColor(cls._COLORS[index % len(cls._COLORS)])
 
     def set_trend_data(self, values: Sequence[tuple[object, int]]) -> None:
         self._trend_points = tuple(
@@ -234,28 +256,63 @@ class _DashboardChart(QWidget):
             self._draw_trend(painter)
 
     def _draw_health(self, painter: QPainter) -> None:
-        foreground = QColor("#e5eaf2" if self._dark else "#172033")
-        muted = QColor("#8c99ad" if self._dark else "#718096")
-        track = QColor("#2b374a" if self._dark else "#e8edf4")
-        content = QRectF(self.rect()).adjusted(9, 7, -9, -7)
-        legend_height = min(58.0, content.height() * 0.34)
-        diameter = max(
-            68.0,
-            min(content.width() * 0.42, content.height() - legend_height - 4),
-        )
-        ring = QRectF(
-            content.center().x() - diameter / 2,
-            content.top(),
-            diameter,
-            diameter,
-        )
-        ring_width = max(12.0, diameter * 0.13)
+        foreground = QColor("#edf2f7" if self._dark else "#172033")
+        muted = QColor("#91a0b5" if self._dark else "#718096")
+        track = QColor("#2b374a" if self._dark else "#e7edf6")
+        panel = QColor("#202b3c" if self._dark else "#f6f8fc")
+        content = QRectF(self.rect()).adjusted(12, 9, -12, -9)
+        if content.width() <= 40 or content.height() <= 40:
+            return
+
+        total = self.health_total
+        horizontal = self.health_layout_mode == "horizontal"
+        if horizontal:
+            chart_width = min(content.width() * 0.43, 210.0)
+            diameter = min(158.0, content.height() - 18, chart_width - 20)
+            diameter = max(84.0, diameter)
+            ring = QRectF(
+                content.left() + (chart_width - diameter) / 2,
+                content.center().y() - diameter / 2,
+                diameter,
+                diameter,
+            )
+            details_height = (
+                138.0
+                if not total
+                else max(112.0, min(176.0, 40.0 + len(self._health_segments[:5]) * 26))
+            )
+            details_height = min(content.height() - 8, details_height)
+            details = QRectF(
+                content.left() + chart_width + 8,
+                content.center().y() - details_height / 2,
+                content.width() - chart_width - 8,
+                details_height,
+            )
+        else:
+            legend_height = min(58.0, content.height() * 0.32)
+            diameter = max(
+                72.0,
+                min(132.0, content.width() * 0.46, content.height() - legend_height - 8),
+            )
+            ring = QRectF(
+                content.center().x() - diameter / 2,
+                content.top(),
+                diameter,
+                diameter,
+            )
+            details = QRectF(
+                content.left(),
+                ring.bottom() + 8,
+                content.width(),
+                max(34.0, content.bottom() - ring.bottom() - 8),
+            )
+
+        ring_width = max(11.0, min(18.0, diameter * 0.12))
         pen = QPen(track, ring_width)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
         painter.drawArc(ring, 0, 360 * 16)
 
-        total = sum(count for _label, count, _color in self._health_segments)
         start = 90 * 16
         if total:
             for _label, count, color in self._health_segments:
@@ -273,27 +330,145 @@ class _DashboardChart(QWidget):
 
         center_font = painter.font()
         center_font.setBold(True)
-        center_font.setPointSize(max(10, center_font.pointSize()))
+        center_font.setPointSize(max(15, center_font.pointSize() + 5))
         painter.setFont(center_font)
         painter.setPen(foreground)
-        painter.drawText(ring, Qt.AlignmentFlag.AlignCenter, str(total))
+        number_rect = QRectF(ring.left(), ring.top() + ring.height() * 0.28, ring.width(), 30)
+        painter.drawText(number_rect, Qt.AlignmentFlag.AlignCenter, f"{total:,}")
+        label_font = painter.font()
+        label_font.setBold(False)
+        label_font.setPointSize(max(8, label_font.pointSize() - 7))
+        painter.setFont(label_font)
+        painter.setPen(muted)
+        painter.drawText(
+            QRectF(ring.left(), number_rect.bottom() - 2, ring.width(), 20),
+            Qt.AlignmentFlag.AlignCenter,
+            "邮箱账号",
+        )
 
-        segments = self._health_segments or (("暂无账号", 0, track),)
-        legend_top = ring.bottom() + 8
-        column_width = content.width() / 2
-        row_height = 18.0
+        if horizontal:
+            self._draw_horizontal_health_details(
+                painter, details, foreground, muted, panel, total
+            )
+        else:
+            self._draw_stacked_health_details(painter, details, muted, panel, total)
+
+    def _draw_horizontal_health_details(
+        self,
+        painter: QPainter,
+        details: QRectF,
+        foreground: QColor,
+        muted: QColor,
+        panel: QColor,
+        total: int,
+    ) -> None:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(panel)
+        painter.drawRoundedRect(details, 10, 10)
+        inner = details.adjusted(14, 11, -14, -10)
+        if not total:
+            title_font = painter.font()
+            title_font.setBold(True)
+            title_font.setPointSize(max(10, title_font.pointSize() + 1))
+            painter.setFont(title_font)
+            painter.setPen(foreground)
+            painter.drawText(
+                QRectF(inner.left(), inner.top() + 12, inner.width(), 24),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                "还没有邮箱账号",
+            )
+            body_font = painter.font()
+            body_font.setBold(False)
+            body_font.setPointSize(max(8, body_font.pointSize() - 2))
+            painter.setFont(body_font)
+            painter.setPen(muted)
+            painter.drawText(
+                QRectF(inner.left(), inner.top() + 43, inner.width(), 48),
+                Qt.AlignmentFlag.AlignLeft
+                | Qt.AlignmentFlag.AlignTop
+                | Qt.TextFlag.TextWordWrap,
+                "添加邮箱并完成首次取件后，连接状态分布会显示在这里。",
+            )
+            return
+
+        heading_font = painter.font()
+        heading_font.setBold(True)
+        heading_font.setPointSize(max(9, heading_font.pointSize()))
+        painter.setFont(heading_font)
+        painter.setPen(foreground)
+        painter.drawText(
+            QRectF(inner.left(), inner.top(), inner.width(), 20),
+            Qt.AlignmentFlag.AlignVCenter,
+            "状态分布",
+        )
+        row_top = inner.top() + 25
+        row_height = max(20.0, min(27.0, (inner.bottom() - row_top) / 5))
         label_font = painter.font()
         label_font.setBold(False)
         label_font.setPointSize(max(8, label_font.pointSize() - 1))
         painter.setFont(label_font)
         metrics = QFontMetrics(label_font)
-        for index, (label, count, color) in enumerate(segments[:6]):
-            row, column = divmod(index, 2)
-            x = content.left() + column * column_width
-            y = legend_top + row * row_height
+        for index, (label, count, color) in enumerate(self._health_segments[:5]):
+            y = row_top + index * row_height
+            if y + row_height > inner.bottom() + 2:
+                break
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
-            painter.drawEllipse(QPointF(x + 4, y + 7), 4, 4)
+            painter.drawEllipse(QPointF(inner.left() + 4, y + row_height / 2), 4, 4)
+            painter.setPen(muted)
+            text = metrics.elidedText(
+                label,
+                Qt.TextElideMode.ElideRight,
+                max(30, int(inner.width() - 74)),
+            )
+            painter.drawText(
+                QRectF(inner.left() + 14, y, inner.width() - 70, row_height),
+                Qt.AlignmentFlag.AlignVCenter,
+                text,
+            )
+            painter.setPen(foreground)
+            painter.drawText(
+                QRectF(inner.right() - 61, y, 61, row_height),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                f"{count}  ·  {round(count * 100 / total)}%",
+            )
+
+    def _draw_stacked_health_details(
+        self,
+        painter: QPainter,
+        details: QRectF,
+        muted: QColor,
+        panel: QColor,
+        total: int,
+    ) -> None:
+        if not total:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(panel)
+            empty = details.adjusted(6, 1, -6, -1)
+            painter.drawRoundedRect(empty, 8, 8)
+            painter.setPen(muted)
+            painter.drawText(
+                empty.adjusted(10, 0, -10, 0),
+                Qt.AlignmentFlag.AlignCenter,
+                "添加邮箱后显示连接状态分布",
+            )
+            return
+
+        segments = self._health_segments[:6]
+        column_width = details.width() / 2
+        row_height = max(17.0, min(21.0, details.height() / 3))
+        label_font = painter.font()
+        label_font.setBold(False)
+        label_font.setPointSize(max(8, label_font.pointSize()))
+        painter.setFont(label_font)
+        metrics = QFontMetrics(label_font)
+        for index, (label, count, color) in enumerate(segments[:6]):
+            row, column = divmod(index, 2)
+            x = details.left() + column * column_width
+            y = details.top() + row * row_height
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawEllipse(QPointF(x + 4, y + row_height / 2), 4, 4)
             painter.setPen(muted)
             text = metrics.elidedText(
                 f"{label}  {count}",
@@ -301,7 +476,7 @@ class _DashboardChart(QWidget):
                 int(column_width - 18),
             )
             painter.drawText(
-                QRectF(x + 13, y - 2, column_width - 15, row_height),
+                QRectF(x + 13, y, column_width - 15, row_height),
                 Qt.AlignmentFlag.AlignVCenter,
                 text,
             )
