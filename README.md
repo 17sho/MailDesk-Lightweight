@@ -2,7 +2,7 @@
 
 面向 Windows 与 macOS 的本地多邮箱管理工具轻量版。
 
-[![Version](https://img.shields.io/badge/version-0.4.7-2563eb.svg)](https://github.com/17sho/MailDesk-Lightweight/releases)
+[![Version](https://img.shields.io/badge/version-0.4.8-2563eb.svg)](https://github.com/17sho/MailDesk-Lightweight/releases)
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg?logo=windows11&logoColor=white)](https://github.com/17sho/MailDesk-Lightweight/releases)
 [![macOS](https://img.shields.io/badge/macOS-13%2B-111111.svg?logo=apple&logoColor=white)](docs/MACOS.md)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab.svg?logo=python&logoColor=white)](https://www.python.org/)
@@ -31,12 +31,12 @@
 | Chromium / QtWebEngine | 完全不包含 |
 | 普通文本、链接、表格 | 支持 |
 | CID、data URI、附件图片 | 支持 |
-| 外部网络图片 | 不主动额外下载 |
+| 外部网络图片 | 轻量异步加载；拦截明显追踪像素 |
 | 复杂 CSS、响应式 HTML | 可能与浏览器排版不同 |
 | Windows onefile | 约 39 MiB |
 | macOS ZIP | Apple 芯片约 33 MiB；Intel 约 36 MiB |
 
-轻量版遵循“邮件服务器返回什么就显示什么”的原则，不额外启动浏览器内核，也不为了补全外链图片进行二次下载。对于高度依赖网页 CSS 或远程资源的营销邮件，排版完整度会低于 Chromium 阅读器。
+轻量版不会启动浏览器内核。邮件自身携带的 CID/data 图片直接显示；HTML 仅引用的公开 HTTPS 图片由现有网络栈异步载入内存，不写入磁盘，并跳过声明为 1×1/2×2 的明显追踪像素。复杂浏览器 CSS 的排版完整度仍可能低于 Chromium 阅读器。
 
 ## 主要功能
 

@@ -117,6 +117,29 @@ def test_available_update_shows_toolbar_button_and_popup(qtbot, tmp_path) -> Non
     assert window._update_dialog.latest_version == "0.4.0"
 
 
+def test_settings_inline_update_check_keeps_result_inside_settings(
+    qtbot, tmp_path
+) -> None:
+    window, _settings = _window(qtbot, tmp_path)
+    feedback: list[tuple[str, str]] = []
+    window.updateCheckFeedback.connect(
+        lambda state, message: feedback.append((state, message))
+    )
+    window._update_check_manual = True
+    window._update_check_inline = True
+
+    window._on_update_check_result(_update_info(), None)
+
+    assert window.update_tool_button.isVisible()
+    assert window._update_dialog is None
+    assert feedback == [
+        (
+            "available",
+            "发现 MailDesk v0.4.0，关闭设置后可点击顶部“更新”安装。",
+        )
+    ]
+
+
 def test_application_composition_enables_startup_update_checks(qtbot, tmp_path) -> None:
     root = tmp_path / "MailDesk"
     paths = AppPaths(
@@ -132,7 +155,7 @@ def test_application_composition_enables_startup_update_checks(qtbot, tmp_path) 
     window._startup_update_timer.stop()
 
     assert window._update_service is not None
-    assert window._update_service.current_version == "0.4.7"
+    assert window._update_service.current_version == "0.4.8"
     assert window._update_service.updates_dir == paths.updates
     assert window.check_updates_action.isEnabled()
 
