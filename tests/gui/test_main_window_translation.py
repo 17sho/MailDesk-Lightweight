@@ -139,6 +139,20 @@ def test_translation_settings_live_under_tools_menu(qtbot, tmp_path) -> None:
     assert window.translate_action.text() == "翻译当前邮件"
     assert set(window.translation_language_actions) >= {"zh-CN", "en", "ja", "fr"}
     assert window.translation_confirm_action.isChecked() is False
+    tool_texts = [action.text() for action in window.tools_menu_button.menu().actions()]
+    assert tool_texts == [
+        "邮件与帮助",
+        "邮件翻译",
+        "使用说明",
+        "维护",
+        "检查更新",
+        "重置界面布局",
+        "显示运行日志",
+        "审计",
+        "导出审计报告",
+    ]
+    assert window.translation_menu.actions()[0] is window.translate_action
+    assert window.translation_language_menu.icon().isNull() is False
 
     window.translation_language_actions["fr"].trigger()
     window.translation_confirm_action.setChecked(True)

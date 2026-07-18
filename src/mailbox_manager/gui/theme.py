@@ -1040,6 +1040,7 @@ QMenu::item:selected {
     background: #edf4ff;
     color: #1d4ed8;
 }
+QMenu::item:focus { outline: 0; border: 1px solid #bfdbfe; }
 QMenu::item:checked {
     color: #273449;
 }
@@ -2249,6 +2250,7 @@ QMenu::item:selected {
     background: #1b3150;
     color: #bfdbfe;
 }
+QMenu::item:focus { outline: 0; border: 1px solid #3b82f6; }
 QMenu::item:checked {
     color: #d7deea;
 }
