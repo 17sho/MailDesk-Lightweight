@@ -26,7 +26,7 @@ def test_usage_guide_is_not_embedded_in_system_settings(qtbot) -> None:
     labels = [dialog.navigation.item(row).text() for row in range(dialog.navigation.count())]
 
     assert "使用说明" not in labels
-    assert dialog.navigation.count() == dialog.pages.count() == 10
+    assert dialog.navigation.count() == dialog.pages.count() == 9
 
 
 def test_tools_menu_opens_the_usage_guide(qtbot, tmp_path) -> None:

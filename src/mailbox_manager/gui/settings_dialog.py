@@ -55,7 +55,6 @@ from mailbox_manager.gui.window_geometry import configure_resizable_window
 from mailbox_manager.mail.parser import extract_matches
 from mailbox_manager.services.translation_service import (
     DEFAULT_TRANSLATION_LANGUAGE,
-    TRANSLATION_LANGUAGES,
 )
 
 
@@ -74,6 +73,10 @@ class EnterpriseSettingsDialog(QDialog):
         self.setObjectName("settingsDialog")
         values = values or {}
         self._webhook_options = list(webhook_options or [])
+        self._translation_language_value = str(
+            values.get("translation_language", DEFAULT_TRANSLATION_LANGUAGE)
+        )
+        self._translation_confirm_value = bool(values.get("translation_confirm", True))
         self.setWindowTitle("MailDesk · 系统设置")
         font_delta = max(0, self.font().pointSize() - 10)
         minimum_width = min(1020, 720 + font_delta * 30)
@@ -102,7 +105,6 @@ class EnterpriseSettingsDialog(QDialog):
         self.pages.addWidget(self._proxy_page(values))
         self.pages.addWidget(self._webhook_page())
         self.pages.addWidget(self._rule_page())
-        self.pages.addWidget(self._translation_page(values))
         self.pages.addWidget(self._appearance_page(values))
         self.pages.addWidget(self._dashboard_page(values))
         self.pages.addWidget(self._close_behavior_page(values))
@@ -172,7 +174,6 @@ class EnterpriseSettingsDialog(QDialog):
             ("网络代理", "globe"),
             ("Webhook 对接", "audit"),
             ("自动化规则", "tools"),
-            ("邮件翻译", "mail"),
             ("外观与字体", "settings"),
             ("工作台", "users"),
             ("关闭与托盘", "logout"),
@@ -437,39 +438,6 @@ class EnterpriseSettingsDialog(QDialog):
         layout.addStretch(1)
         return page
 
-    def _translation_page(self, values: dict[str, object]) -> QScrollArea:
-        page, layout = self._new_page(
-            "邮件翻译",
-            "设置阅读器的默认目标语言；翻译只会在你点击按钮后执行。",
-        )
-        language_form = self._add_card(
-            layout,
-            "默认翻译语言",
-            "阅读器会自动识别原文语言，并将正文翻译为下面选择的语言。",
-        )
-        self.translation_language = QComboBox()
-        for code, label in TRANSLATION_LANGUAGES:
-            self.translation_language.addItem(label, code)
-        current_language = str(values.get("translation_language", DEFAULT_TRANSLATION_LANGUAGE))
-        index = self.translation_language.findData(current_language)
-        self.translation_language.setCurrentIndex(max(0, index))
-        self._add_row(language_form, "目标语言", self.translation_language)
-
-        privacy_form = self._add_card(
-            layout,
-            "隐私与确认",
-            "翻译时仅发送当前邮件正文，不发送邮箱密码、Refresh Token、附件或账号配置。",
-        )
-        provider = QLabel("Google 公共翻译服务 · 自动检测原文语言")
-        provider.setObjectName("translationProviderLabel")
-        provider.setWordWrap(True)
-        self.translation_confirm = QCheckBox("每次发送正文进行翻译前向我确认")
-        self.translation_confirm.setChecked(bool(values.get("translation_confirm", True)))
-        self._add_row(privacy_form, "翻译服务", provider)
-        self._add_row(privacy_form, "发送确认", self.translation_confirm)
-        layout.addStretch(1)
-        return page
-
     def _dashboard_page(self, values: dict[str, object]) -> QScrollArea:
         page, layout = self._new_page(
             "工作台快捷操作",
@@ -665,13 +633,8 @@ class EnterpriseSettingsDialog(QDialog):
         self.rule_target.clear()
         self.rule_webhook.setCurrentIndex(max(0, self.rule_webhook.findData(None)))
         self.rule_forward.clear()
-        self.translation_language.setCurrentIndex(
-            max(
-                0,
-                self.translation_language.findData(DEFAULT_TRANSLATION_LANGUAGE),
-            )
-        )
-        self.translation_confirm.setChecked(True)
+        self._translation_language_value = DEFAULT_TRANSLATION_LANGUAGE
+        self._translation_confirm_value = True
         self.theme_picker.set_current_theme(DEFAULT_THEME)
         self.font_family.setCurrentIndex(max(0, self.font_family.findData("")))
         self.font_size.setValue(DEFAULT_FONT_SIZE)
@@ -1067,8 +1030,8 @@ class EnterpriseSettingsDialog(QDialog):
             "rule_target": self.rule_target.text().strip(),
             "rule_webhook_id": self.rule_webhook.currentData(),
             "rule_forward": self.rule_forward.text().strip().casefold(),
-            "translation_language": self.translation_language.currentData(),
-            "translation_confirm": self.translation_confirm.isChecked(),
+            "translation_language": self._translation_language_value,
+            "translation_confirm": self._translation_confirm_value,
             "theme": self.theme_picker.current_theme(),
             "dark_theme": THEME_BY_ID[self.theme_picker.current_theme()].dark,
             "font_family": str(self.font_family.currentData() or ""),

@@ -132,6 +132,24 @@ def test_main_toolbar_translates_and_toggles_original_without_confirmation(
     assert window.message_body.toPlainText() == "这是译文"
 
 
+def test_translation_settings_live_under_tools_menu(qtbot, tmp_path) -> None:
+    window, settings = _window(qtbot, tmp_path, FakeTranslationService())
+
+    assert window.translation_menu.title() == "邮件翻译"
+    assert window.translate_action.text() == "翻译当前邮件"
+    assert set(window.translation_language_actions) >= {"zh-CN", "en", "ja", "fr"}
+    assert window.translation_confirm_action.isChecked() is False
+
+    window.translation_language_actions["fr"].trigger()
+    window.translation_confirm_action.setChecked(True)
+
+    saved = settings.get("enterprise_ui", {})
+    assert saved["translation_language"] == "fr"
+    assert saved["translation_confirm"] is True
+    assert "法语" in window.translation_language_label.text()
+    assert "翻译前确认" in window.translation_language_label.text()
+
+
 def test_stale_translation_result_cannot_cross_into_new_message(
     qtbot, tmp_path, monkeypatch
 ) -> None:

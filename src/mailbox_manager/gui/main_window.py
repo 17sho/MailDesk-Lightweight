@@ -455,6 +455,23 @@ class MainWindow(QMainWindow):
         self.usage_guide_action = QAction("使用说明", self)
         self.usage_guide_action.setShortcut("F1")
         self.usage_guide_action.triggered.connect(self.show_usage_guide)
+        self.translate_action = QAction("翻译当前邮件", self)
+        self.translate_action.setToolTip("翻译阅读器中当前选中的邮件正文")
+        self.translate_action.setEnabled(False)
+        self.translate_action.triggered.connect(self._translate_current_message)
+        self.translation_confirm_action = QAction("翻译前确认", self)
+        self.translation_confirm_action.setCheckable(True)
+        self.translation_confirm_action.setChecked(self._translation_confirm)
+        self.translation_confirm_action.toggled.connect(self._toggle_translation_confirmation)
+        self.translation_language_actions: dict[str, QAction] = {}
+        for code, label in TRANSLATION_LANGUAGES:
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setData(code)
+            action.triggered.connect(
+                lambda _checked=False, language=code: self._set_translation_language(language)
+            )
+            self.translation_language_actions[code] = action
         self.check_updates_action = QAction("检查更新", self)
         self.check_updates_action.setToolTip("立即检查 GitHub 正式发行版本")
         self.check_updates_action.setEnabled(self._update_service is not None)
@@ -615,6 +632,16 @@ class MainWindow(QMainWindow):
         tools_menu.addSeparator()
         tools_menu.addAction(self.usage_guide_action)
         tools_menu.addSeparator()
+        self.translation_menu = tools_menu.addMenu("邮件翻译")
+        self.translation_menu.setIcon(line_icon("mail", "#64748b"))
+        self.translation_menu.addAction(self.translate_action)
+        language_menu = self.translation_menu.addMenu("目标语言")
+        for action in self.translation_language_actions.values():
+            language_menu.addAction(action)
+        self.translation_menu.addSeparator()
+        self.translation_menu.addAction(self.translation_confirm_action)
+        self._sync_translation_menu()
+        tools_menu.addSeparator()
         tools_menu.addAction(self.check_updates_action)
         tools_menu.addSeparator()
         tools_menu.addAction(self.reset_layout_action)
@@ -650,6 +677,8 @@ class MainWindow(QMainWindow):
         self.settings_action.setIcon(line_icon("settings", neutral))
         self.audit_action.setIcon(line_icon("audit", neutral))
         self.usage_guide_action.setIcon(line_icon("info", neutral))
+        if hasattr(self, "translation_menu"):
+            self.translation_menu.setIcon(line_icon("mail", neutral))
         self.check_updates_action.setIcon(line_icon("refresh", neutral))
         self.import_menu_button.setIcon(line_icon("import", neutral))
         self.tools_menu_button.setIcon(line_icon("tools", neutral))
@@ -2532,9 +2561,48 @@ class MainWindow(QMainWindow):
         self.translate_button.setText(
             "正在翻译…" if busy else "重新翻译" if self._translated_text else "翻译邮件"
         )
+        if hasattr(self, "translate_action"):
+            self.translate_action.setEnabled(can_translate and not busy)
+            self.translate_action.setText(
+                "正在翻译…"
+                if busy
+                else "重新翻译当前邮件"
+                if self._translated_text
+                else "翻译当前邮件"
+            )
         self.translation_toggle_button.setEnabled(bool(self._translated_text))
 
-    def _apply_translation_settings(self, target_language: str, require_confirmation: bool) -> None:
+    def _set_translation_language(self, target_language: str) -> None:
+        self._apply_translation_settings(
+            target_language,
+            self._translation_confirm,
+            persist=True,
+        )
+        self.page_toast.show_message(
+            f"翻译目标语言已设为{translation_language_label(self._translation_language)}"
+        )
+
+    def _toggle_translation_confirmation(self, enabled: bool) -> None:
+        self._apply_translation_settings(
+            self._translation_language,
+            enabled,
+            persist=True,
+        )
+        self.page_toast.show_message("翻译前确认已开启" if enabled else "翻译前确认已关闭")
+
+    def _sync_translation_menu(self) -> None:
+        for code, action in getattr(self, "translation_language_actions", {}).items():
+            action.setChecked(code == self._translation_language)
+        if hasattr(self, "translation_confirm_action"):
+            self.translation_confirm_action.setChecked(self._translation_confirm)
+
+    def _apply_translation_settings(
+        self,
+        target_language: str,
+        require_confirmation: bool,
+        *,
+        persist: bool = False,
+    ) -> None:
         language = _valid_translation_language(target_language)
         language_changed = language != self._translation_language
         was_showing_translation = self._showing_translation
@@ -2553,6 +2621,13 @@ class MainWindow(QMainWindow):
                 self._translation_language,
                 self._translation_confirm,
             )
+        self._sync_translation_menu()
+        if persist and self._settings is not None:
+            stored = self._settings.get("enterprise_ui", {})
+            stored = dict(stored) if isinstance(stored, dict) else {}
+            stored["translation_language"] = self._translation_language
+            stored["translation_confirm"] = self._translation_confirm
+            self._settings.set("enterprise_ui", stored)
         self._refresh_translation_controls()
 
     def _render_email_html(self, fragment: str) -> None:

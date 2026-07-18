@@ -326,12 +326,16 @@ def test_settings_dialog_uses_responsive_navigation_and_linked_controls(qtbot) -
     qtbot.addWidget(dialog)
 
     assert dialog.minimumWidth() >= 720
-    assert dialog.navigation.count() == 10
+    assert dialog.navigation.count() == 9
+    assert all(
+        dialog.navigation.item(row).text() != "邮件翻译"
+        for row in range(dialog.navigation.count())
+    )
     assert dialog.navigation.horizontalScrollBarPolicy() is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     assert all(
         not dialog.navigation.item(row).icon().isNull() for row in range(dialog.navigation.count())
     )
-    assert dialog.pages.count() == 10
+    assert dialog.pages.count() == 9
     assert (
         dialog.pages.widget(0).horizontalScrollBarPolicy() is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     )
@@ -353,14 +357,10 @@ def test_settings_dialog_uses_responsive_navigation_and_linked_controls(qtbot) -
     assert dialog.values()["folders"] == ["INBOX", "Junk"]
     dialog.navigation.setCurrentRow(5)
     assert dialog.pages.currentIndex() == 5
-    assert dialog.translation_language.currentData() == "zh-CN"
-    assert dialog.translation_confirm.isChecked() is True
-    dialog.navigation.setCurrentRow(6)
-    assert dialog.pages.currentIndex() == 6
     assert dialog.font_size.value() == 10
     assert dialog.font_weight.currentData() == 500
-    dialog.navigation.setCurrentRow(7)
-    assert dialog.pages.currentIndex() == 7
+    dialog.navigation.setCurrentRow(6)
+    assert dialog.pages.currentIndex() == 6
     assert dialog.values()["dashboard_quick_actions"] == [
         "accounts",
         "fetch",
@@ -368,12 +368,12 @@ def test_settings_dialog_uses_responsive_navigation_and_linked_controls(qtbot) -
         "content_filter",
     ]
     assert dialog.values()["proxy_fetch_enabled"] is False
-    dialog.navigation.setCurrentRow(8)
-    assert dialog.pages.currentIndex() == 8
+    dialog.navigation.setCurrentRow(7)
+    assert dialog.pages.currentIndex() == 7
     assert dialog.navigation.currentItem().text() == "关闭与托盘"
     assert dialog.values()["close_action"] == CLOSE_ACTION_ASK
-    dialog.navigation.setCurrentRow(9)
-    assert dialog.pages.currentIndex() == 9
+    dialog.navigation.setCurrentRow(8)
+    assert dialog.pages.currentIndex() == 8
     assert dialog.update_check_button.text() == "检查系统更新"
 
 
