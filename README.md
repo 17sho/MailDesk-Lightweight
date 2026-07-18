@@ -2,7 +2,7 @@
 
 面向 Windows 与 macOS 的本地多邮箱管理工具轻量版。
 
-[![Version](https://img.shields.io/badge/version-0.5.0--beta-2563eb.svg)](https://github.com/17sho/MailDesk-Lightweight/releases)
+[![Version](https://img.shields.io/badge/version-0.5.1-2563eb.svg)](https://github.com/17sho/MailDesk-Lightweight/releases)
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg?logo=windows11&logoColor=white)](https://github.com/17sho/MailDesk-Lightweight/releases)
 [![macOS](https://img.shields.io/badge/macOS-13%2B-111111.svg?logo=apple&logoColor=white)](docs/MACOS.md)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab.svg?logo=python&logoColor=white)](https://www.python.org/)
