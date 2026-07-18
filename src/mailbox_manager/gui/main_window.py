@@ -110,6 +110,8 @@ from mailbox_manager.gui.settings_dialog import EnterpriseSettingsDialog
 from mailbox_manager.gui.theme import theme_stylesheet
 from mailbox_manager.gui.toast import BottomToast
 from mailbox_manager.gui.update_dialog import UpdateDialog, UpdateDialogState
+from mailbox_manager.gui.usage_guide import UsageGuideDialog
+from mailbox_manager.gui.window_geometry import configure_resizable_window
 from mailbox_manager.gui.workers import (
     DiscoveryWorker,
     FetchWorker,
@@ -201,9 +203,7 @@ _ONE_SHOT_ENTERPRISE_SETTING_KEYS = frozenset(
         "rule_forward",
     }
 )
-_UI_PREFERENCE_KEYS = frozenset(
-    {"theme", "dark_theme", "font_family", "font_size", "font_weight"}
-)
+_UI_PREFERENCE_KEYS = frozenset({"theme", "dark_theme", "font_family", "font_size", "font_weight"})
 
 
 def _persistent_enterprise_settings(values: dict[str, object]) -> dict[str, object]:
@@ -242,11 +242,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setObjectName("mainWindow")
         self.setWindowTitle("MailDesk · 邮箱工作台")
-        self.resize(1440, 900)
-        self.setMinimumSize(1080, 680)
-        self.setDockOptions(
-            self.dockOptions() & ~QMainWindow.DockOption.AnimatedDocks
+        configure_resizable_window(
+            self,
+            preferred=QSize(1440, 900),
+            minimum=QSize(840, 560),
         )
+        self.setDockOptions(self.dockOptions() & ~QMainWindow.DockOption.AnimatedDocks)
         self.setAcceptDrops(True)
         self._accounts = accounts
         self._messages = messages
@@ -275,9 +276,7 @@ class MainWindow(QMainWindow):
         self._update_check_inline = False
         self._update_received_bytes = 0
         self._update_total_bytes: int | None = None
-        translation_values = (
-            settings.get("enterprise_ui", {}) if settings is not None else {}
-        )
+        translation_values = settings.get("enterprise_ui", {}) if settings is not None else {}
         translation_values = (
             dict(translation_values) if isinstance(translation_values, dict) else {}
         )
@@ -292,18 +291,10 @@ class MainWindow(QMainWindow):
         translation_values = safe_enterprise_values
         self._translation_service = translation_service or TranslationService()
         self._translation_language = _valid_translation_language(
-            str(
-                translation_values.get(
-                    "translation_language", DEFAULT_TRANSLATION_LANGUAGE
-                )
-            )
+            str(translation_values.get("translation_language", DEFAULT_TRANSLATION_LANGUAGE))
         )
-        self._translation_confirm = bool(
-            translation_values.get("translation_confirm", True)
-        )
-        self._proxy_fetch_enabled = bool(
-            translation_values.get("proxy_fetch_enabled", False)
-        )
+        self._translation_confirm = bool(translation_values.get("translation_confirm", True))
+        self._proxy_fetch_enabled = bool(translation_values.get("proxy_fetch_enabled", False))
         self._dashboard_quick_actions = configured_quick_action_ids(
             translation_values.get("dashboard_quick_actions")
         )
@@ -337,12 +328,29 @@ class MainWindow(QMainWindow):
         self._active_account_id: int | None = None
         self._content_filter_dialog: ContentFilterDialog | None = None
         self._mail_viewer: MailViewerDialog | None = None
+        self._usage_guide_dialog: UsageGuideDialog | None = None
         self._theme_transition: SnapshotTransition | None = None
         ui_preferences = settings.get("ui_preferences", {}) if settings is not None else {}
         ui_preferences = ui_preferences if isinstance(ui_preferences, dict) else {}
         appearance = normalized_appearance(ui_preferences)
         self._theme_id = str(appearance["theme"])
         self._dark = bool(appearance["dark_theme"])
+        saved_light = str(ui_preferences.get("last_light_theme", ""))
+        saved_dark = str(ui_preferences.get("last_dark_theme", ""))
+        self._last_light_theme = (
+            saved_light
+            if saved_light in THEME_BY_ID and not THEME_BY_ID[saved_light].dark
+            else self._theme_id
+            if not self._dark
+            else "grass_gray"
+        )
+        self._last_dark_theme = (
+            saved_dark
+            if saved_dark in THEME_BY_ID and THEME_BY_ID[saved_dark].dark
+            else self._theme_id
+            if self._dark
+            else "midnight"
+        )
         self._font_family = str(appearance["font_family"])
         self._font_size = int(appearance["font_size"])
         self._font_weight = int(appearance["font_weight"])
@@ -355,10 +363,11 @@ class MainWindow(QMainWindow):
         self._workspace_compact: bool | None = None
         self._wide_account_column_widths = (
             42,
-            310,
+            270,
+            118,
             120,
             80,
-            260,
+            235,
             110,
             155,
             95,
@@ -403,9 +412,7 @@ class MainWindow(QMainWindow):
             self._startup_update_timer = QTimer(self)
             self._startup_update_timer.setSingleShot(True)
             self._startup_update_timer.setInterval(1800)
-            self._startup_update_timer.timeout.connect(
-                lambda: self.check_for_updates(manual=False)
-            )
+            self._startup_update_timer.timeout.connect(lambda: self.check_for_updates(manual=False))
             self._startup_update_timer.start()
 
     def _create_actions(self) -> None:
@@ -445,12 +452,13 @@ class MainWindow(QMainWindow):
         self.log_action.setCheckable(True)
         self.log_action.setShortcut("Ctrl+L")
         self.log_action.triggered.connect(self._toggle_log_drawer)
+        self.usage_guide_action = QAction("使用说明", self)
+        self.usage_guide_action.setShortcut("F1")
+        self.usage_guide_action.triggered.connect(self.show_usage_guide)
         self.check_updates_action = QAction("检查更新", self)
         self.check_updates_action.setToolTip("立即检查 GitHub 正式发行版本")
         self.check_updates_action.setEnabled(self._update_service is not None)
-        self.check_updates_action.triggered.connect(
-            lambda: self.check_for_updates(manual=True)
-        )
+        self.check_updates_action.triggered.connect(lambda: self.check_for_updates(manual=True))
 
     def _create_toolbar(self) -> None:
         toolbar = QToolBar("主工具栏", self)
@@ -496,9 +504,7 @@ class MainWindow(QMainWindow):
         self.import_menu_button = QToolButton()
         self.import_menu_button.setObjectName("importMenuButton")
         self.import_menu_button.setText("批量导入")
-        self.import_menu_button.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-        )
+        self.import_menu_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.import_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         import_menu = QMenu(self.import_menu_button)
         import_menu.addAction(self.import_action)
@@ -525,12 +531,8 @@ class MainWindow(QMainWindow):
         self.toolbar_more_button.setObjectName("toolbarMoreButton")
         self.toolbar_more_button.setText("更多")
         self.toolbar_more_button.setAccessibleName("更多操作")
-        self.toolbar_more_button.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-        )
-        self.toolbar_more_button.setPopupMode(
-            QToolButton.ToolButtonPopupMode.InstantPopup
-        )
+        self.toolbar_more_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.toolbar_more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         more_menu = QMenu(self.toolbar_more_button)
         more_menu.addAction(self.add_account_action)
         more_menu.addSeparator()
@@ -556,9 +558,7 @@ class MainWindow(QMainWindow):
         self.update_tool_button.setText("更新")
         self.update_tool_button.setAccessibleName("查看可用更新")
         self.update_tool_button.setToolTip("有新的 MailDesk 正式版本可用")
-        self.update_tool_button.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-        )
+        self.update_tool_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.update_tool_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.update_tool_button.clicked.connect(self._on_update_button_clicked)
         self.update_toolbar_action = toolbar.addWidget(self.update_tool_button)
@@ -579,9 +579,7 @@ class MainWindow(QMainWindow):
         self.concurrency_spin.setAccessibleName("并发任务数量")
         self.concurrency_spin.setRange(1, 50)
         self.concurrency_spin.setValue(5)
-        self.concurrency_spin.setButtonSymbols(
-            QAbstractSpinBox.ButtonSymbols.NoButtons
-        )
+        self.concurrency_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.concurrency_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.concurrency_spin.setAccelerated(True)
         self.concurrency_spin.setFixedWidth(42)
@@ -610,12 +608,12 @@ class MainWindow(QMainWindow):
         self.tools_menu_button = QToolButton()
         self.tools_menu_button.setObjectName("toolsMenuButton")
         self.tools_menu_button.setText("工具")
-        self.tools_menu_button.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-        )
+        self.tools_menu_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.tools_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         tools_menu = QMenu(self.tools_menu_button)
         tools_menu.addAction(self.log_action)
+        tools_menu.addSeparator()
+        tools_menu.addAction(self.usage_guide_action)
         tools_menu.addSeparator()
         tools_menu.addAction(self.check_updates_action)
         tools_menu.addSeparator()
@@ -651,6 +649,7 @@ class MainWindow(QMainWindow):
         self.theme_action.setIcon(line_icon("sun" if self._dark else "moon", neutral))
         self.settings_action.setIcon(line_icon("settings", neutral))
         self.audit_action.setIcon(line_icon("audit", neutral))
+        self.usage_guide_action.setIcon(line_icon("info", neutral))
         self.check_updates_action.setIcon(line_icon("refresh", neutral))
         self.import_menu_button.setIcon(line_icon("import", neutral))
         self.tools_menu_button.setIcon(line_icon("tools", neutral))
@@ -771,20 +770,19 @@ class MainWindow(QMainWindow):
         account_header.setMinimumSectionSize(36)
         account_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         account_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        account_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        account_header.setSectionResizeMode(
+            self.account_model.SERVER_COLUMN,
+            QHeaderView.ResizeMode.Stretch,
+        )
         for section, width in enumerate(self._wide_account_column_widths):
             account_header.resizeSection(section, width)
         self.column_menu = QMenu(self)
         self._column_actions: dict[int, QAction] = {}
         column_preferences = (
-            self._settings.get("account_columns", {})
-            if self._settings is not None
-            else {}
+            self._settings.get("account_columns", {}) if self._settings is not None else {}
         )
         hidden_columns = set(
-            column_preferences.get("hidden", [])
-            if isinstance(column_preferences, dict)
-            else []
+            column_preferences.get("hidden", []) if isinstance(column_preferences, dict) else []
         )
         for column in range(1, self.account_model.columnCount()):
             action = self.column_menu.addAction(self.account_model.HEADERS[column])
@@ -803,6 +801,7 @@ class MainWindow(QMainWindow):
         )
         self.account_table.accountActivated.connect(self._account_row_clicked)
         self.account_table.emailCopyRequested.connect(self._copy_account_email)
+        self.account_table.credentialCopyRequested.connect(self._copy_account_credential)
         self.account_model.checkedChanged.connect(self._checked_accounts_changed)
         self.account_stack = AnimatedStackedWidget(duration=110, distance=0)
         self.account_stack.setObjectName("accountStack")
@@ -966,12 +965,8 @@ class MainWindow(QMainWindow):
             self.dashboard.startFetchRequested.connect(self.start_fetch)
             self.dashboard.importRequested.connect(self.show_add_account)
             self.dashboard.contentFilterRequested.connect(self.show_content_filter)
-            self.dashboard.abnormalAccountsRequested.connect(
-                self._show_abnormal_accounts
-            )
-            self.dashboard.proxyToggleRequested.connect(
-                self._set_proxy_fetch_enabled
-            )
+            self.dashboard.abnormalAccountsRequested.connect(self._show_abnormal_accounts)
+            self.dashboard.proxyToggleRequested.connect(self._set_proxy_fetch_enabled)
             self.dashboard.recentMessageRequested.connect(self._open_recent_message)
             self.main_tabs.currentChanged.connect(self._main_tab_changed)
             self.setCentralWidget(self.main_tabs)
@@ -1057,9 +1052,7 @@ class MainWindow(QMainWindow):
         self.message_search_scope.addItem("当前邮箱", "current")
         self.message_search_scope.addItem("全部邮箱", "all")
         self.message_search_scope.setMaximumWidth(110)
-        self.message_search_scope.currentIndexChanged.connect(
-            self._message_search_scope_changed
-        )
+        self.message_search_scope.currentIndexChanged.connect(self._message_search_scope_changed)
         message_search_layout.addWidget(self.message_search_scope)
         message_search_button = QPushButton("搜索")
         message_search_button.clicked.connect(self.search_messages)
@@ -1070,9 +1063,7 @@ class MainWindow(QMainWindow):
         self.message_list.setSpacing(1)
         self.message_list.setWordWrap(True)
         self.message_list.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self.message_list.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        self.message_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.message_list.setAccessibleName("邮件列表")
         self.message_list.currentRowChanged.connect(self._message_selected)
         self.message_list.itemDoubleClicked.connect(
@@ -1126,9 +1117,7 @@ class MainWindow(QMainWindow):
         message_tools_layout.addWidget(self.translation_toggle_button)
         self.translate_button = QPushButton("翻译邮件")
         self.translate_button.setObjectName("translationButton")
-        self.translate_button.setToolTip(
-            "仅发送当前邮件正文，不发送附件、账号密码或 Token"
-        )
+        self.translate_button.setToolTip("仅发送当前邮件正文，不发送附件、账号密码或 Token")
         self.translate_button.setEnabled(False)
         self.translate_button.clicked.connect(self._translate_current_message)
         message_tools_layout.addWidget(self.translate_button)
@@ -1167,9 +1156,7 @@ class MainWindow(QMainWindow):
         self.message_body.setAccessibleName("邮件正文")
         self.message_body.setPlaceholderText("选择一封邮件后在此查看正文")
         self.message_body.anchorClicked.connect(self._open_message_link)
-        self.message_body.feedbackRequested.connect(
-            lambda text: self.page_toast.show_message(text)
-        )
+        self.message_body.feedbackRequested.connect(lambda text: self.page_toast.show_message(text))
         body_layout.addWidget(self.message_body, 1)
         self.match_view = QPlainTextEdit()
         self.match_view.setObjectName("matchView")
@@ -1224,9 +1211,7 @@ class MainWindow(QMainWindow):
         title_layout.addWidget(clear_button)
         close_button = QPushButton("收起")
         close_button.setObjectName("ghostButton")
-        close_button.clicked.connect(
-            lambda _checked=False: self._set_log_drawer_visible(False)
-        )
+        close_button.clicked.connect(lambda _checked=False: self._set_log_drawer_visible(False))
         title_layout.addWidget(close_button)
         self.log_dock.setTitleBarWidget(title_bar)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
@@ -1311,9 +1296,7 @@ class MainWindow(QMainWindow):
 
     def _populate_groups(self) -> None:
         selected_kind, selected_id = (
-            self._selected_group_state()
-            if self.group_tree.topLevelItemCount()
-            else ("all", None)
+            self._selected_group_state() if self.group_tree.topLevelItemCount() else ("all", None)
         )
         expanded_ids: set[int] = set()
         if self.group_tree.topLevelItemCount():
@@ -1379,9 +1362,7 @@ class MainWindow(QMainWindow):
         self.group_tree.blockSignals(False)
         self._populate_group_move_combo()
 
-    def _find_group_item(
-        self, kind: str, group_id: int | None
-    ) -> QTreeWidgetItem | None:
+    def _find_group_item(self, kind: str, group_id: int | None) -> QTreeWidgetItem | None:
         iterator = [
             self.group_tree.topLevelItem(index)
             for index in range(self.group_tree.topLevelItemCount())
@@ -1424,9 +1405,7 @@ class MainWindow(QMainWindow):
         query = self.account_search.text() if hasattr(self, "account_search") else ""
         tag_id = self.tag_filter.currentData() if hasattr(self, "tag_filter") else None
         accounts = self._selected_group_accounts(query=query, tag_id=tag_id)
-        status_filter = (
-            self.status_filter.currentData() if hasattr(self, "status_filter") else None
-        )
+        status_filter = self.status_filter.currentData() if hasattr(self, "status_filter") else None
         if status_filter == "abnormal":
             normal_states = {
                 AccountStatus.SUCCESS,
@@ -1435,9 +1414,7 @@ class MainWindow(QMainWindow):
             }
             accounts = [account for account in accounts if account.status not in normal_states]
         elif isinstance(status_filter, str) and status_filter:
-            accounts = [
-                account for account in accounts if account.status.value == status_filter
-            ]
+            accounts = [account for account in accounts if account.status.value == status_filter]
         self.account_model.set_accounts(accounts)
         self._update_account_empty_state()
         self._checked_accounts_changed()
@@ -1517,9 +1494,7 @@ class MainWindow(QMainWindow):
 
     def delete_selected_accounts(self) -> None:
         selected = self._selected_accounts()
-        account_ids = [
-            account.account_id for account in selected if account.account_id is not None
-        ]
+        account_ids = [account.account_id for account in selected if account.account_id is not None]
         if not account_ids:
             self.statusBar().showMessage("请先勾选需要删除的账号", 5000)
             return
@@ -1587,9 +1562,7 @@ class MainWindow(QMainWindow):
         item = self.group_tree.itemAt(position)
         menu = QMenu(self)
         kind = str(item.data(0, _GROUP_KIND_ROLE) or "all") if item else "all"
-        group_id = (
-            item.data(0, Qt.ItemDataRole.UserRole) if item and kind == "group" else None
-        )
+        group_id = item.data(0, Qt.ItemDataRole.UserRole) if item and kind == "group" else None
         add_action = menu.addAction("新建子分组" if group_id is not None else "新建分组")
         rename_action = menu.addAction("重命名分组")
         delete_action = menu.addAction("删除分组")
@@ -1865,9 +1838,7 @@ class MainWindow(QMainWindow):
             return
         self._queue_fetch([account], request)
 
-    def _queue_fetch(
-        self, accounts: list[EmailAccount], request: FetchRequest
-    ) -> None:
+    def _queue_fetch(self, accounts: list[EmailAccount], request: FetchRequest) -> None:
         if self._workers:
             self.statusBar().showMessage("已有取件任务正在运行", 5000)
             return
@@ -1893,21 +1864,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"正在收取 0 / {self._fetch_total} 个账号")
 
     def _build_fetch_request(self) -> FetchRequest:
-        values = (
-            self._settings.get("fetch", {})
-            if self._settings is not None
-            else {}
-        )
+        values = self._settings.get("fetch", {}) if self._settings is not None else {}
         values = values if isinstance(values, dict) else {}
         keyword_values = values.get("extract_keywords", FetchRequest().keywords)
         keywords = (
             tuple(str(item) for item in keyword_values if str(item).strip())
             if isinstance(keyword_values, (list, tuple))
-            else tuple(
-                item.strip()
-                for item in str(keyword_values).split(",")
-                if item.strip()
-            )
+            else tuple(item.strip() for item in str(keyword_values).split(",") if item.strip())
         )
         return FetchRequest(
             folders=tuple(values.get("folders", ["INBOX"])),
@@ -1998,8 +1961,7 @@ class MainWindow(QMainWindow):
                 status is AccountStatus.SUCCESS for status in self._fetch_results.values()
             )
             cancelled_count = sum(
-                status is AccountStatus.CANCELLED
-                for status in self._fetch_results.values()
+                status is AccountStatus.CANCELLED for status in self._fetch_results.values()
             )
             failed_count = sum(
                 status
@@ -2022,18 +1984,13 @@ class MainWindow(QMainWindow):
                 tone = "warning"
             else:
                 failed_count += unreported_count
-                summary = (
-                    f"收件完成：成功 {success_count}，失败 {failed_count}，"
-                    f"共 {total} 个账号"
-                )
+                summary = f"收件完成：成功 {success_count}，失败 {failed_count}，共 {total} 个账号"
                 tone = "success"
             self._fetch_stop_requested = False
             self.statusBar().showMessage(summary, 10_000)
             self.page_toast.show_message(summary, tone=tone, duration=4200)
         else:
-            self.statusBar().showMessage(
-                f"正在收取 {self._fetch_completed} / {total} 个账号"
-            )
+            self.statusBar().showMessage(f"正在收取 {self._fetch_completed} / {total} 个账号")
 
     def _selected_accounts(self) -> list[EmailAccount]:
         return self.account_model.checked_accounts()
@@ -2043,9 +2000,7 @@ class MainWindow(QMainWindow):
         if self._workspace_compact:
             selection_text = f"{len(selected)} 个" if selected else "未选"
         else:
-            selection_text = (
-                f"已勾选 {len(selected)} 个账号" if selected else "未勾选账号"
-            )
+            selection_text = f"已勾选 {len(selected)} 个账号" if selected else "未勾选账号"
         self.selection_count_label.setText(selection_text)
         self.selection_count_label.setToolTip(
             f"已勾选 {len(selected)} 个账号" if selected else "当前没有勾选账号"
@@ -2074,6 +2029,20 @@ class MainWindow(QMainWindow):
             return
         self._copy_email_address(account.email)
 
+    def _copy_account_credential(self, index) -> None:
+        account = (
+            self.account_model.account_at(index.row())
+            if index.isValid() and index.column() == self.account_model.CREDENTIAL_COLUMN
+            else None
+        )
+        if account is None or not account.secret:
+            self.page_toast.show_message("此账号未保存密码/授权码")
+            return
+        clipboard = QApplication.clipboard()
+        clipboard.setText(account.secret)
+        QTimer.singleShot(0, lambda value=account.secret: clipboard.setText(value))
+        self.page_toast.show_message("密码/授权码已复制")
+
     def _copy_email_address(self, email_address: str) -> None:
         email_address = email_address.strip()
         clipboard = QApplication.clipboard()
@@ -2083,12 +2052,9 @@ class MainWindow(QMainWindow):
 
     def _show_account_details(self, account: EmailAccount | None) -> None:
         self.quick_fetch_button.setEnabled(account is not None and not self._workers)
-        account_detail = (
-            f" · {account.status_detail}" if account and account.status_detail else ""
-        )
+        account_detail = f" · {account.status_detail}" if account and account.status_detail else ""
         self.selected_account_label.setText(
-            f"{account.email} · {STATUS_LABELS[account.status]}"
-            + account_detail
+            f"{account.email} · {STATUS_LABELS[account.status]}" + account_detail
             if account
             else "单击一个账号查看最近邮件"
         )
@@ -2121,18 +2087,12 @@ class MainWindow(QMainWindow):
             )
             account_email = self._displayed_message_accounts[index]
             sender = message.sender_display or "未知发件人"
-            account_meta = "  ·  ".join(
-                item for item in (account_email, received) if item
-            )
+            account_meta = "  ·  ".join(item for item in (account_email, received) if item)
             self.message_list.addItem(
-                f"{message.subject or '(无主题)'}\n"
-                f"发件人：{sender}\n"
-                f"收件账号：{account_meta}"
+                f"{message.subject or '(无主题)'}\n发件人：{sender}\n收件账号：{account_meta}"
             )
         self.message_count_label.setText(f"{len(self._displayed_messages)} {count_suffix}")
-        first_is_loaded = bool(
-            self._displayed_messages and self._displayed_messages[0].body_loaded
-        )
+        first_is_loaded = bool(self._displayed_messages and self._displayed_messages[0].body_loaded)
         self.message_list.setCurrentRow(0 if first_is_loaded else -1)
         if first_is_loaded:
             return
@@ -2148,9 +2108,7 @@ class MainWindow(QMainWindow):
         self.message_body.clear()
         self.match_view.clear()
         self.message_context_label.setText(
-            "邮件列表已加载，单击一封邮件查看正文"
-            if self._displayed_messages
-            else empty_text
+            "邮件列表已加载，单击一封邮件查看正文" if self._displayed_messages else empty_text
         )
         self._refresh_translation_controls()
 
@@ -2172,15 +2130,9 @@ class MainWindow(QMainWindow):
             )
             return
         hits = self._messages.search(query, account_id=account_id)
-        total_messages, loaded_bodies = self._messages.body_load_counts(
-            account_id=account_id
-        )
+        total_messages, loaded_bodies = self._messages.body_load_counts(account_id=account_id)
         unloaded_bodies = max(0, total_messages - loaded_bodies)
-        pending_note = (
-            f"；另有 {unloaded_bodies} 封正文尚未加载"
-            if unloaded_bodies
-            else ""
-        )
+        pending_note = f"；另有 {unloaded_bodies} 封正文尚未加载" if unloaded_bodies else ""
         self._set_displayed_messages(
             [hit.message for hit in hits],
             [hit.account_email for hit in hits],
@@ -2226,9 +2178,7 @@ class MainWindow(QMainWindow):
         dialog.exec()
         self._content_filter_dialog = None
 
-    def show_compose_dialog(
-        self, accounts: list[EmailAccount] | None = None
-    ) -> None:
+    def show_compose_dialog(self, accounts: list[EmailAccount] | None = None) -> None:
         if self._send_worker is not None:
             self.page_toast.show_message("已有发件任务正在运行", tone="warning")
             return
@@ -2281,8 +2231,7 @@ class MainWindow(QMainWindow):
                 f"发件账号 {index}/{total} · {outcome} · {item.result.status.value}"
             )
         summary = (
-            f"发件完成：成功 {result.success_count}，失败 {result.failure_count}，"
-            f"共 {total} 个邮箱"
+            f"发件完成：成功 {result.success_count}，失败 {result.failure_count}，共 {total} 个邮箱"
         )
         self.log_view.appendPlainText(summary)
         tone = "success" if result.failure_count == 0 else "warning"
@@ -2535,18 +2484,12 @@ class MainWindow(QMainWindow):
         self._translation_workers[generation] = worker
         self._pool.start(worker)
 
-    def _translation_loaded(
-        self, generation: int, translated: str, error: object
-    ) -> None:
+    def _translation_loaded(self, generation: int, translated: str, error: object) -> None:
         if generation != self._translation_generation:
             return
         self._active_translation_generation = None
         if error is not None:
-            detail = (
-                str(error)
-                if isinstance(error, TranslationError)
-                else "翻译失败，请稍后重试"
-            )
+            detail = str(error) if isinstance(error, TranslationError) else "翻译失败，请稍后重试"
             self._refresh_translation_controls()
             QMessageBox.warning(self, "翻译失败", detail)
             return
@@ -2587,17 +2530,11 @@ class MainWindow(QMainWindow):
         can_translate = bool(self._current_message and self._translation_source_text)
         self.translate_button.setEnabled(can_translate and not busy)
         self.translate_button.setText(
-            "正在翻译…"
-            if busy
-            else "重新翻译"
-            if self._translated_text
-            else "翻译邮件"
+            "正在翻译…" if busy else "重新翻译" if self._translated_text else "翻译邮件"
         )
         self.translation_toggle_button.setEnabled(bool(self._translated_text))
 
-    def _apply_translation_settings(
-        self, target_language: str, require_confirmation: bool
-    ) -> None:
+    def _apply_translation_settings(self, target_language: str, require_confirmation: bool) -> None:
         language = _valid_translation_language(target_language)
         language_changed = language != self._translation_language
         was_showing_translation = self._showing_translation
@@ -2628,9 +2565,7 @@ class MainWindow(QMainWindow):
             )
         )
 
-    def _populate_message_attachments(
-        self, attachments: tuple[MailAttachment, ...]
-    ) -> None:
+    def _populate_message_attachments(self, attachments: tuple[MailAttachment, ...]) -> None:
         self._visible_message_attachments = tuple(
             attachment
             for attachment in attachments
@@ -2642,14 +2577,10 @@ class MainWindow(QMainWindow):
             self.message_attachment_list.addItem(
                 f"{attachment.filename}    {_attachment_size(attachment.size)}{state}"
             )
-            self.message_attachment_list.item(index).setData(
-                Qt.ItemDataRole.UserRole, index
-            )
+            self.message_attachment_list.item(index).setData(Qt.ItemDataRole.UserRole, index)
         count = len(self._visible_message_attachments)
         total = sum(attachment.size for attachment in self._visible_message_attachments)
-        self.message_attachment_title.setText(
-            f"附件 {count} 个 · {_attachment_size(total)}"
-        )
+        self.message_attachment_title.setText(f"附件 {count} 个 · {_attachment_size(total)}")
         self.message_attachment_panel.setVisible(bool(count))
         if count:
             self.message_attachment_list.setCurrentRow(0)
@@ -2659,24 +2590,18 @@ class MainWindow(QMainWindow):
         if item is None:
             return None
         index = item.data(Qt.ItemDataRole.UserRole)
-        if not isinstance(index, int) or not 0 <= index < len(
-            self._visible_message_attachments
-        ):
+        if not isinstance(index, int) or not 0 <= index < len(self._visible_message_attachments):
             return None
         return self._visible_message_attachments[index]
 
-    def _load_message_attachment(
-        self, attachment: MailAttachment
-    ) -> MailAttachment | None:
+    def _load_message_attachment(self, attachment: MailAttachment) -> MailAttachment | None:
         if attachment.content is not None:
             return attachment
         if attachment.attachment_id is None:
             return None
         return self._messages.get_attachment(attachment.attachment_id)
 
-    def _attachment_gallery_html(
-        self, attachments: tuple[MailAttachment, ...]
-    ) -> str:
+    def _attachment_gallery_html(self, attachments: tuple[MailAttachment, ...]) -> str:
         figures: list[str] = []
         for attachment in attachments:
             if not attachment.content_type.casefold().startswith("image/"):
@@ -2699,9 +2624,9 @@ class MainWindow(QMainWindow):
             )
         if not figures:
             return ""
-        return '<section class="attachment-gallery"><b>图片附件</b>' + "".join(
-            figures
-        ) + "</section>"
+        return (
+            '<section class="attachment-gallery"><b>图片附件</b>' + "".join(figures) + "</section>"
+        )
 
     def _save_selected_message_attachment(self) -> None:
         attachment = self._selected_message_attachment()
@@ -2716,9 +2641,7 @@ class MainWindow(QMainWindow):
             )
             return
         filename = _attachment_filename(loaded.filename)
-        target, _ = QFileDialog.getSaveFileName(
-            self, "保存附件", filename, "所有文件 (*.*)"
-        )
+        target, _ = QFileDialog.getSaveFileName(self, "保存附件", filename, "所有文件 (*.*)")
         if not target:
             return
         try:
@@ -2755,9 +2678,7 @@ class MainWindow(QMainWindow):
                 skipped += 1
                 continue
             saved += 1
-        self.page_toast.show_message(
-            f"附件保存完成 · 成功 {saved} · 跳过 {skipped}"
-        )
+        self.page_toast.show_message(f"附件保存完成 · 成功 {saved} · 跳过 {skipped}")
 
     def _open_message_link(self, url: QUrl) -> None:
         if url.scheme().casefold() not in {"http", "https", "mailto"}:
@@ -2775,7 +2696,7 @@ class MainWindow(QMainWindow):
     def toggle_theme(self) -> None:
         self._apply_appearance_preferences(
             {
-                "theme": "grass_gray" if self._dark else "midnight",
+                "theme": self._last_light_theme if self._dark else self._last_dark_theme,
                 "font_family": self._font_family,
                 "font_size": self._font_size,
                 "font_weight": self._font_weight,
@@ -2797,12 +2718,14 @@ class MainWindow(QMainWindow):
             or int(appearance["font_weight"]) != self._font_weight
         )
         transition = (
-            self._prepare_theme_transition()
-            if appearance_changed and self.isVisible()
-            else None
+            self._prepare_theme_transition() if appearance_changed and self.isVisible() else None
         )
         self._theme_id = str(appearance["theme"])
         self._dark = bool(appearance["dark_theme"])
+        if self._dark:
+            self._last_dark_theme = self._theme_id
+        else:
+            self._last_light_theme = self._theme_id
         self._font_family = str(appearance["font_family"])
         self._font_size = int(appearance["font_size"])
         self._font_weight = int(appearance["font_weight"])
@@ -2829,7 +2752,14 @@ class MainWindow(QMainWindow):
         elif self._rendered_html_fragment:
             self._render_email_html(self._rendered_html_fragment)
         if persist and self._settings is not None:
-            self._settings.set("ui_preferences", appearance)
+            self._settings.set(
+                "ui_preferences",
+                {
+                    **appearance,
+                    "last_light_theme": self._last_light_theme,
+                    "last_dark_theme": self._last_dark_theme,
+                },
+            )
         if transition is not None:
             transition.start()
 
@@ -2864,12 +2794,12 @@ class MainWindow(QMainWindow):
         self._active_account_id = account.account_id
         self._show_account_details(account)
         selected_ids = [
-            item.account_id
-            for item in self._selected_accounts()
-            if item.account_id is not None
+            item.account_id for item in self._selected_accounts() if item.account_id is not None
         ]
         menu = QMenu(self)
         copy_email_action = menu.addAction("复制邮箱地址")
+        copy_credential_action = menu.addAction("复制密码/授权码")
+        copy_credential_action.setEnabled(bool(account.secret))
         compose_action = menu.addAction("使用此邮箱写信")
         compose_action.setEnabled(self._send_worker is None)
         quick_fetch_action = menu.addAction("立即取件此账号")
@@ -2925,6 +2855,11 @@ class MainWindow(QMainWindow):
         selected = menu.exec(self.account_table.viewport().mapToGlobal(position))
         if selected is copy_email_action:
             self._copy_email_address(account.email)
+        elif selected is copy_credential_action:
+            clipboard = QApplication.clipboard()
+            clipboard.setText(account.secret)
+            QTimer.singleShot(0, lambda value=account.secret: clipboard.setText(value))
+            self.page_toast.show_message("密码/授权码已复制")
         elif selected is compose_action:
             self.show_compose_dialog([account])
         elif selected is quick_fetch_action:
@@ -2987,9 +2922,7 @@ class MainWindow(QMainWindow):
         self._smtp_workers[account.account_id] = worker
         self._pool.start(worker)
 
-    def _smtp_probe_result(
-        self, account_id: int, status: AccountStatus, detail: str
-    ) -> None:
+    def _smtp_probe_result(self, account_id: int, status: AccountStatus, detail: str) -> None:
         self.log_view.appendPlainText(f"账号 {account_id} · {STATUS_LABELS[status]} · {detail}")
 
     def _smtp_probe_finished(self, account_id: int) -> None:
@@ -3010,9 +2943,7 @@ class MainWindow(QMainWindow):
             self.log_view.appendPlainText(f"账号 {account_id} · 未发现可用 IMAP 配置")
             return
         host, port, security = result
-        self._accounts.update_connection(
-            account_id, host=host, port=port, security=security
-        )
+        self._accounts.update_connection(account_id, host=host, port=port, security=security)
         self.log_view.appendPlainText(
             f"账号 {account_id} · 已发现并保存 {host}:{port} ({security.value})"
         )
@@ -3030,9 +2961,7 @@ class MainWindow(QMainWindow):
         self._security_workers[account.account_id] = worker
         self._pool.start(worker)
 
-    def _security_audit_result(
-        self, account_id: int, findings: object, error: object
-    ) -> None:
+    def _security_audit_result(self, account_id: int, findings: object, error: object) -> None:
         if isinstance(error, SecurityAuditPermissionError):
             dialog = QMessageBox(self)
             dialog.setWindowTitle("需要额外 Microsoft 权限")
@@ -3042,9 +2971,7 @@ class MainWindow(QMainWindow):
                 "安全审计需要 MailboxSettings.Read 委托权限。可以通过微软官方设备码流程"
                 "重新授权 Mail.Read 与 MailboxSettings.Read；账号密码不会交给 MailDesk。"
             )
-            authorize_button = dialog.addButton(
-                "重新授权", QMessageBox.ButtonRole.AcceptRole
-            )
+            authorize_button = dialog.addButton("重新授权", QMessageBox.ButtonRole.AcceptRole)
             dialog.addButton("暂不授权", QMessageBox.ButtonRole.RejectRole)
             dialog.exec()
             if dialog.clickedButton() is authorize_button:
@@ -3094,9 +3021,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("正在向 Microsoft 请求设备验证码…")
         self._pool.start(worker)
 
-    def _security_consent_challenge(
-        self, account_id: int, challenge: DeviceCodeChallenge
-    ) -> None:
+    def _security_consent_challenge(self, account_id: int, challenge: DeviceCodeChallenge) -> None:
         QApplication.clipboard().setText(challenge.user_code)
         target = challenge.verification_uri_complete or challenge.verification_uri
         QDesktopServices.openUrl(QUrl(target))
@@ -3119,9 +3044,7 @@ class MainWindow(QMainWindow):
         if worker is not None:
             worker.cancel()
 
-    def _security_consent_result(
-        self, account_id: int, refresh_token: str, error: object
-    ) -> None:
+    def _security_consent_result(self, account_id: int, refresh_token: str, error: object) -> None:
         dialog = self._security_consent_dialogs.pop(account_id, None)
         if dialog is not None:
             dialog.close()
@@ -3159,9 +3082,7 @@ class MainWindow(QMainWindow):
         selected = menu.exec(self.message_list.viewport().mapToGlobal(position))
         if selected is not export_action:
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "导出邮件原件", "message.eml", "EML (*.eml)"
-        )
+        path, _ = QFileDialog.getSaveFileName(self, "导出邮件原件", "message.eml", "EML (*.eml)")
         if not path:
             return
         try:
@@ -3252,11 +3173,7 @@ class MainWindow(QMainWindow):
         inline = self._update_check_inline
         if error is not None:
             logging.getLogger(__name__).warning("Update check failed: %s", error)
-            message = (
-                str(error)
-                if isinstance(error, UpdateError)
-                else "检查更新失败，请稍后重试。"
-            )
+            message = str(error) if isinstance(error, UpdateError) else "检查更新失败，请稍后重试。"
             if inline:
                 self.updateCheckFeedback.emit("error", message)
             elif manual:
@@ -3268,9 +3185,7 @@ class MainWindow(QMainWindow):
                 self.update_toolbar_action.setVisible(False)
                 self.update_tool_button.hide()
             version = (
-                self._update_service.current_version
-                if self._update_service is not None
-                else "当前"
+                self._update_service.current_version if self._update_service is not None else "当前"
             )
             if inline:
                 self.updateCheckFeedback.emit(
@@ -3311,9 +3226,7 @@ class MainWindow(QMainWindow):
         ):
             self._staged_update = None
         skipped = (
-            self._settings.get("skipped_update_version", "")
-            if self._settings is not None
-            else ""
+            self._settings.get("skipped_update_version", "") if self._settings is not None else ""
         )
         if str(skipped).strip().removeprefix("v") == update.release.version and not manual:
             self.update_toolbar_action.setVisible(False)
@@ -3425,18 +3338,14 @@ class MainWindow(QMainWindow):
         self._set_update_button_state("downloading", 0)
         self._update_pool.start(worker)
 
-    def _on_update_download_progress(
-        self, operation_id: str, received: int, total: object
-    ) -> None:
+    def _on_update_download_progress(self, operation_id: str, received: int, total: object) -> None:
         if operation_id != self._update_operation_id:
             return
         safe_total = total if isinstance(total, int) and total > 0 else None
         self._update_received_bytes = max(0, received)
         self._update_total_bytes = safe_total
         percent = (
-            min(100, int(self._update_received_bytes * 100 / safe_total))
-            if safe_total
-            else None
+            min(100, int(self._update_received_bytes * 100 / safe_total)) if safe_total else None
         )
         self._set_update_button_state("downloading", percent)
         self._apply_update_progress_to_dialog()
@@ -3445,11 +3354,7 @@ class MainWindow(QMainWindow):
         if self._update_dialog is None:
             return
         total = self._update_total_bytes
-        percent = (
-            min(100, int(self._update_received_bytes * 100 / total))
-            if total
-            else None
-        )
+        percent = min(100, int(self._update_received_bytes * 100 / total)) if total else None
         self._update_dialog.set_download_progress(
             percent,
             received_bytes=self._update_received_bytes,
@@ -3463,9 +3368,7 @@ class MainWindow(QMainWindow):
         if self._update_dialog is not None:
             self._update_dialog.set_download_status(message)
 
-    def _on_update_download_result(
-        self, operation_id: str, staged: object, error: object
-    ) -> None:
+    def _on_update_download_result(self, operation_id: str, staged: object, error: object) -> None:
         if operation_id != self._update_operation_id:
             return
         if error is not None:
@@ -3488,9 +3391,7 @@ class MainWindow(QMainWindow):
             )
             self._set_update_button_state("available")
             if self._update_dialog is not None:
-                self._update_dialog.set_download_error(
-                    "更新包版本与当前任务不一致，已阻止安装。"
-                )
+                self._update_dialog.set_download_error("更新包版本与当前任务不一致，已阻止安装。")
             return
 
         self._staged_update = staged
@@ -3646,9 +3547,7 @@ class MainWindow(QMainWindow):
             elif dialog is not None:
                 dialog.set_download_complete()
             return
-        logging.getLogger("maildesk.update").info(
-            "Update installer accepted the hand-off"
-        )
+        logging.getLogger("maildesk.update").info("Update installer accepted the hand-off")
         if dialog is not None:
             dialog.accept()
         self.statusBar().showMessage("安装助手已接管，正在退出 MailDesk…")
@@ -3657,9 +3556,7 @@ class MainWindow(QMainWindow):
     def _on_update_installer_finished(self) -> None:
         self._update_install_worker = None
 
-    def _set_update_button_state(
-        self, state: str, percent: int | None = None
-    ) -> None:
+    def _set_update_button_state(self, state: str, percent: int | None = None) -> None:
         button = self.update_tool_button
         button.setProperty("state", state)
         if state == "ready":
@@ -3706,12 +3603,19 @@ class MainWindow(QMainWindow):
         if application is not None:
             application.quit()
 
+    def show_usage_guide(self) -> None:
+        dialog = self._usage_guide_dialog
+        if dialog is None:
+            dialog = UsageGuideDialog(self)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            dialog.destroyed.connect(lambda: setattr(self, "_usage_guide_dialog", None))
+            self._usage_guide_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
     def show_settings(self) -> None:
-        current = (
-            self._settings.get("enterprise_ui", {})
-            if self._settings is not None
-            else {}
-        )
+        current = self._settings.get("enterprise_ui", {}) if self._settings is not None else {}
         current = current if isinstance(current, dict) else {}
         current = dict(current)
         if self._settings is not None:
@@ -3734,16 +3638,10 @@ class MainWindow(QMainWindow):
         if self._schedules is not None:
             selected_group_id = self._selected_group_id()
             selected_schedule = next(
-                (
-                    item
-                    for item in self._schedules.list_all()
-                    if item.group_id == selected_group_id
-                ),
+                (item for item in self._schedules.list_all() if item.group_id == selected_group_id),
                 None,
             )
-            current["schedule_enabled"] = bool(
-                selected_schedule and selected_schedule.enabled
-            )
+            current["schedule_enabled"] = bool(selected_schedule and selected_schedule.enabled)
             if selected_schedule is not None:
                 current["schedule_interval"] = selected_schedule.interval_minutes
         if self._proxies is not None:
@@ -3763,9 +3661,7 @@ class MainWindow(QMainWindow):
             webhook_options=webhook_options,
         )
         if hasattr(dialog, "addProxyRequested"):
-            dialog.addProxyRequested.connect(
-                lambda: self._show_add_proxy_dialog(dialog)
-            )
+            dialog.addProxyRequested.connect(lambda: self._show_add_proxy_dialog(dialog))
         if hasattr(dialog, "updateCheckRequested"):
             dialog.updateCheckRequested.connect(
                 lambda: self.check_for_updates(manual=True, inline=True)
@@ -3792,9 +3688,7 @@ class MainWindow(QMainWindow):
             if int(values["login_interval_max"]) < int(values["login_interval_min"]):
                 raise ValueError("最大登录间隔不能小于最小间隔")
             if self._settings is not None:
-                self._settings.set(
-                    "enterprise_ui", _persistent_enterprise_settings(values)
-                )
+                self._settings.set("enterprise_ui", _persistent_enterprise_settings(values))
                 self._settings.set(
                     "fetch",
                     {
@@ -3831,11 +3725,7 @@ class MainWindow(QMainWindow):
                 notify=False,
             )
             self._apply_translation_settings(
-                str(
-                    values.get(
-                        "translation_language", DEFAULT_TRANSLATION_LANGUAGE
-                    )
-                ),
+                str(values.get("translation_language", DEFAULT_TRANSLATION_LANGUAGE)),
                 bool(values.get("translation_confirm", True)),
             )
             self._apply_appearance_preferences(values, persist=True)
@@ -3991,11 +3881,7 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(0, application.quit)
 
     def _configured_close_action(self) -> str:
-        values = (
-            self._settings.get("enterprise_ui", {})
-            if self._settings is not None
-            else {}
-        )
+        values = self._settings.get("enterprise_ui", {}) if self._settings is not None else {}
         action = (
             str(values.get("close_action", CLOSE_ACTION_ASK))
             if isinstance(values, dict)
@@ -4031,12 +3917,8 @@ class MainWindow(QMainWindow):
     def _apply_responsive_layout(self, available_width: int) -> None:
         """Keep every primary workflow reachable at supported window widths."""
 
-        self._set_toolbar_compact(
-            available_width < self._toolbar_compact_breakpoint()
-        )
-        self._set_workspace_compact(
-            available_width < _WORKSPACE_COMPACT_BREAKPOINT
-        )
+        self._set_toolbar_compact(available_width < self._toolbar_compact_breakpoint())
+        self._set_workspace_compact(available_width < _WORKSPACE_COMPACT_BREAKPOINT)
 
     def _toolbar_compact_breakpoint(self) -> int:
         font_delta = max(0, self._font_size - DEFAULT_FONT_SIZE)
@@ -4072,19 +3954,11 @@ class MainWindow(QMainWindow):
         else:
             toolbar_actions = self.main_toolbar.actions()
             if self.export_action not in toolbar_actions:
-                self.main_toolbar.insertAction(
-                    self.fetch_separator_action, self.export_action
-                )
-                self.export_tool_button = self.main_toolbar.widgetForAction(
-                    self.export_action
-                )
+                self.main_toolbar.insertAction(self.fetch_separator_action, self.export_action)
+                self.export_tool_button = self.main_toolbar.widgetForAction(self.export_action)
             if self.compose_action not in self.main_toolbar.actions():
-                self.main_toolbar.insertAction(
-                    self.fetch_separator_action, self.compose_action
-                )
-                self.compose_tool_button = self.main_toolbar.widgetForAction(
-                    self.compose_action
-                )
+                self.main_toolbar.insertAction(self.fetch_separator_action, self.compose_action)
+                self.compose_tool_button = self.main_toolbar.widgetForAction(self.compose_action)
 
         responsive_buttons = (
             "add_account_tool_button",
@@ -4106,9 +3980,7 @@ class MainWindow(QMainWindow):
                 button.setToolButtonStyle(style)
 
         if isinstance(getattr(self, "theme_tool_button", None), QToolButton):
-            self.theme_tool_button.setToolButtonStyle(
-                Qt.ToolButtonStyle.ToolButtonIconOnly
-            )
+            self.theme_tool_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
         self.main_toolbar.setProperty("compact", compact)
         self.main_toolbar.style().unpolish(self.main_toolbar)
@@ -4124,7 +3996,7 @@ class MainWindow(QMainWindow):
                 self.account_header.sectionSize(section)
                 for section in range(self.account_model.columnCount())
             )
-            column_widths = (38, 220, 92, 68, 125, 85, 125, 82)
+            column_widths = (38, 205, 96, 90, 68, 125, 85, 125, 82)
         else:
             column_widths = self._wide_account_column_widths
 

@@ -4,7 +4,7 @@ import csv
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import QSize, Qt, QThreadPool
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from mailbox_manager.domain.models import FetchRequest
 from mailbox_manager.gui.icons import line_icon
+from mailbox_manager.gui.window_geometry import configure_resizable_window
 from mailbox_manager.gui.workers import DeepSearchWorker
 from mailbox_manager.services.content_filter import (
     ContentMatch,
@@ -62,8 +63,11 @@ class ContentFilterDialog(QDialog):
         self._coverage_loaded = 0
         self.setObjectName("contentFilterDialog")
         self.setWindowTitle("内容筛选与导出")
-        self.resize(1080, 680)
-        self.setMinimumSize(820, 520)
+        configure_resizable_window(
+            self,
+            preferred=QSize(1080, 680),
+            minimum=QSize(720, 480),
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -84,9 +88,7 @@ class ContentFilterDialog(QDialog):
         title_copy.setSpacing(2)
         title = QLabel("筛选邮件中的指定文字或链接")
         title.setObjectName("utilityDialogTitle")
-        help_label = QLabel(
-            "只输出匹配的链接或文字片段，不导出整封邮件正文"
-        )
+        help_label = QLabel("只输出匹配的链接或文字片段，不导出整封邮件正文")
         help_label.setObjectName("utilityDialogSubtitle")
         help_label.setWordWrap(True)
         title_copy.addWidget(title)
@@ -231,9 +233,7 @@ class ContentFilterDialog(QDialog):
         try:
             mode = ContentMatchMode(str(self.mode_combo.currentData()))
             account_id = (
-                self._current_account_id
-                if self.scope_combo.currentData() == "current"
-                else None
+                self._current_account_id if self.scope_combo.currentData() == "current" else None
             )
             hits = self._messages.list_with_accounts(account_id=account_id)
             self._coverage_total = len(hits)
@@ -271,9 +271,7 @@ class ContentFilterDialog(QDialog):
         )
         unloaded = max(0, self._coverage_total - self._coverage_loaded)
         pending = f"；另有 {unloaded} 封正文尚未加载" if unloaded else ""
-        self.result_label.setText(
-            f"共找到 {len(self._results)} 条匹配内容 · {coverage}{pending}"
-        )
+        self.result_label.setText(f"共找到 {len(self._results)} 条匹配内容 · {coverage}{pending}")
         enabled = bool(self._results)
         self.copy_button.setEnabled(enabled)
         self.export_csv_button.setEnabled(enabled)
@@ -281,9 +279,7 @@ class ContentFilterDialog(QDialog):
 
     def _refresh_coverage_label(self, _index: int = -1) -> None:
         account_id = (
-            self._current_account_id
-            if self.scope_combo.currentData() == "current"
-            else None
+            self._current_account_id if self.scope_combo.currentData() == "current" else None
         )
         self._coverage_total, self._coverage_loaded = self._messages.body_load_counts(
             account_id=account_id
@@ -297,9 +293,7 @@ class ContentFilterDialog(QDialog):
                 f"{self._coverage_loaded} 封，尚未加载 {unloaded} 封"
             )
         else:
-            self.result_label.setText(
-                f"当前范围 {self._coverage_total} 封邮件，正文均已加载"
-            )
+            self.result_label.setText(f"当前范围 {self._coverage_total} 封邮件，正文均已加载")
         self._refresh_deep_button()
 
     def _refresh_deep_button(self, _value: object = None) -> None:
@@ -375,9 +369,7 @@ class ContentFilterDialog(QDialog):
         self._thread_pool.start(worker)
 
     def _deep_search_progress(self, completed: int, total: int, email: str) -> None:
-        self.result_label.setText(
-            f"联网深度筛选 {completed}/{total} · {email}"
-        )
+        self.result_label.setText(f"联网深度筛选 {completed}/{total} · {email}")
 
     def _deep_search_result(self, summary: object) -> None:
         values = summary if isinstance(summary, dict) else {}

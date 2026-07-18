@@ -5,7 +5,7 @@ import re
 from html import escape as html_escape
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer, QUrl, Signal
+from PySide6.QtCore import QSize, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -33,6 +33,7 @@ from mailbox_manager.domain.models import (
 )
 from mailbox_manager.gui.email_body_view import EmailBodyView
 from mailbox_manager.gui.icons import line_icon
+from mailbox_manager.gui.window_geometry import configure_resizable_window
 from mailbox_manager.gui.workers import MessageLoadWorker, TranslationWorker
 from mailbox_manager.mail.display import (
     MessageDisplayContent,
@@ -74,8 +75,11 @@ class MailViewerDialog(QDialog):
         super().__init__(parent)
         self.setObjectName("mailViewerDialog")
         self.setWindowTitle(f"邮件阅读器 · {account.email}")
-        self.resize(1320, 820)
-        self.setMinimumSize(960, 620)
+        configure_resizable_window(
+            self,
+            preferred=QSize(1320, 820),
+            minimum=QSize(760, 520),
+        )
         self.setModal(False)
         self.account_id = account.account_id or 0
         self._account = account
@@ -122,9 +126,7 @@ class MailViewerDialog(QDialog):
         account_label = QLabel(account.email)
         account_label.setObjectName("sectionCaption")
         account_label.setWordWrap(True)
-        account_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        account_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         title_copy.addWidget(title)
         title_copy.addWidget(account_label)
         header_layout.addLayout(title_copy, 1)
@@ -134,9 +136,7 @@ class MailViewerDialog(QDialog):
         self.fetch_button.clicked.connect(lambda: self.fetchRequested.emit(self.account_id))
         header_layout.addWidget(self.fetch_button)
         compose_button = QPushButton("写邮件")
-        compose_button.clicked.connect(
-            lambda: self.composeRequested.emit(self.account_id)
-        )
+        compose_button.clicked.connect(lambda: self.composeRequested.emit(self.account_id))
         header_layout.addWidget(compose_button)
         filter_button = QPushButton("筛选导出")
         filter_button.clicked.connect(self.filterRequested.emit)
@@ -182,9 +182,7 @@ class MailViewerDialog(QDialog):
         message_header_layout.setSpacing(3)
         self.sender_label = QLabel("选择一封邮件")
         self.sender_label.setObjectName("mailViewerSender")
-        self.sender_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.sender_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.sender_address_label = QLabel()
         self.sender_address_label.setObjectName("mailViewerSenderAddress")
         self.sender_address_label.setWordWrap(True)
@@ -268,9 +266,7 @@ class MailViewerDialog(QDialog):
         self.attachment_list = QListWidget()
         self.attachment_list.setObjectName("mailAttachmentList")
         self.attachment_list.setMaximumHeight(104)
-        self.attachment_list.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        self.attachment_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.attachment_list.itemDoubleClicked.connect(
             lambda _item: self._save_selected_attachment()
         )
@@ -331,8 +327,7 @@ class MailViewerDialog(QDialog):
         special_count = 0
         for index, message in enumerate(self._messages):
             haystack = (
-                f"{message.subject}\n{message.sender_name}\n{message.sender}\n"
-                f"{message.text_body}"
+                f"{message.subject}\n{message.sender_name}\n{message.sender}\n{message.text_body}"
             ).casefold()
             if query and query not in haystack:
                 continue
@@ -466,9 +461,7 @@ class MailViewerDialog(QDialog):
 
     def _render_plain_body(self, text: str) -> None:
         if self._attachment_gallery_html():
-            self._render_html(
-                f"<div>{html_escape(text).replace(chr(10), '<br>')}</div>"
-            )
+            self._render_html(f"<div>{html_escape(text).replace(chr(10), '<br>')}</div>")
         else:
             self.body.setPlainText(text)
 
@@ -525,20 +518,14 @@ class MailViewerDialog(QDialog):
         self._translation_workers[generation] = worker
         self._pool.start(worker)
 
-    def _translation_loaded(
-        self, generation: int, translated: str, error: object
-    ) -> None:
+    def _translation_loaded(self, generation: int, translated: str, error: object) -> None:
         if self._closed or generation != self._translation_generation:
             return
         self._active_translation_generation = None
         self.translate_button.setEnabled(bool(self._translation_source_text))
         if error is not None:
             self.translate_button.setText("重试翻译")
-            detail = (
-                str(error)
-                if isinstance(error, TranslationError)
-                else "翻译失败，请稍后重试"
-            )
+            detail = str(error) if isinstance(error, TranslationError) else "翻译失败，请稍后重试"
             QMessageBox.warning(self, "翻译失败", detail)
             return
         if not translated.strip():
@@ -548,9 +535,7 @@ class MailViewerDialog(QDialog):
         self.translate_button.setText("重新翻译")
         self._translated_text = translated.strip()
         self._render_translation_view()
-        self._show_feedback(
-            f"已翻译为{translation_language_label(self._translation_language)}"
-        )
+        self._show_feedback(f"已翻译为{translation_language_label(self._translation_language)}")
 
     def _translation_finished(self, generation: int) -> None:
         self._translation_workers.pop(generation, None)
@@ -574,9 +559,7 @@ class MailViewerDialog(QDialog):
         if hasattr(self, "translate_button"):
             self.translate_button.setText("翻译邮件")
 
-    def update_translation_settings(
-        self, target_language: str, require_confirmation: bool
-    ) -> None:
+    def update_translation_settings(self, target_language: str, require_confirmation: bool) -> None:
         """Apply translation preferences to an already open reader."""
 
         language = _valid_translation_language(target_language)
@@ -600,9 +583,7 @@ class MailViewerDialog(QDialog):
         if hasattr(self, "translate_button") and self._active_translation_generation is None:
             self.translate_button.setEnabled(bool(self._translation_source_text))
 
-    def _populate_attachments(
-        self, attachments: tuple[MailAttachment, ...]
-    ) -> None:
+    def _populate_attachments(self, attachments: tuple[MailAttachment, ...]) -> None:
         self._visible_attachments = tuple(
             attachment
             for attachment in attachments
@@ -612,13 +593,9 @@ class MailViewerDialog(QDialog):
         for index, attachment in enumerate(self._visible_attachments):
             size = _format_size(attachment.size)
             state = " · 内容过大，仅保存了信息" if attachment.is_truncated else ""
-            item = QListWidgetItem(
-                f"{attachment.filename or '未命名附件'}    {size}{state}"
-            )
+            item = QListWidgetItem(f"{attachment.filename or '未命名附件'}    {size}{state}")
             item.setData(Qt.ItemDataRole.UserRole, index)
-            item.setToolTip(
-                f"类型：{attachment.content_type or '未知'}\n大小：{size}"
-            )
+            item.setToolTip(f"类型：{attachment.content_type or '未知'}\n大小：{size}")
             self.attachment_list.addItem(item)
         count = len(self._visible_attachments)
         total = sum(max(0, attachment.size) for attachment in self._visible_attachments)
@@ -639,9 +616,7 @@ class MailViewerDialog(QDialog):
             return None
         return self._visible_attachments[index]
 
-    def _attachment_with_content(
-        self, attachment: MailAttachment
-    ) -> MailAttachment | None:
+    def _attachment_with_content(self, attachment: MailAttachment) -> MailAttachment | None:
         if attachment.content is not None:
             return attachment
         if self._message_repository is None or attachment.attachment_id is None:
@@ -686,9 +661,7 @@ class MailViewerDialog(QDialog):
         skipped = 0
         target_directory = Path(directory)
         try:
-            used_names = {
-                path.name.casefold() for path in target_directory.iterdir()
-            }
+            used_names = {path.name.casefold() for path in target_directory.iterdir()}
         except OSError:
             used_names = set()
         for attachment in self._visible_attachments:
@@ -717,9 +690,7 @@ class MailViewerDialog(QDialog):
         self.body.setHtml(
             prepare_email_web_document(
                 fragment + self._attachment_gallery_html(),
-                preheader_hint=(
-                    self._current_message.subject if self._current_message else ""
-                ),
+                preheader_hint=(self._current_message.subject if self._current_message else ""),
             )
         )
 
@@ -745,9 +716,7 @@ class MailViewerDialog(QDialog):
                 "</figure>"
             )
         return (
-            '<section class="attachment-gallery"><b>图片附件</b>'
-            + "".join(figures)
-            + "</section>"
+            '<section class="attachment-gallery"><b>图片附件</b>' + "".join(figures) + "</section>"
             if figures
             else ""
         )

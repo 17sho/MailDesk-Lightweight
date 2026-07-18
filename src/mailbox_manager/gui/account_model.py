@@ -21,7 +21,22 @@ _ROOT_INDEX = QModelIndex()
 
 class AccountTableModel(QAbstractTableModel):
     checkedChanged = Signal()
-    HEADERS = ("", "账号", "邮箱类型", "协议", "服务器", "标签", "最近收件", "状态")
+    CHECK_COLUMN = 0
+    EMAIL_COLUMN = 1
+    CREDENTIAL_COLUMN = 2
+    SERVER_COLUMN = 5
+    STATUS_COLUMN = 8
+    HEADERS = (
+        "",
+        "账号",
+        "密码/授权码",
+        "邮箱类型",
+        "协议",
+        "服务器",
+        "标签",
+        "最近收件",
+        "状态",
+    )
 
     def __init__(self, accounts: list[EmailAccount] | None = None) -> None:
         super().__init__()
@@ -52,7 +67,7 @@ class AccountTableModel(QAbstractTableModel):
         if not index.isValid() or not 0 <= index.row() < len(self._accounts):
             return None
         account = self._accounts[index.row()]
-        if role == Qt.ItemDataRole.CheckStateRole and index.column() == 0:
+        if role == Qt.ItemDataRole.CheckStateRole and index.column() == self.CHECK_COLUMN:
             return (
                 Qt.CheckState.Checked
                 if account.account_id in self._checked_ids
@@ -62,6 +77,7 @@ class AccountTableModel(QAbstractTableModel):
             values = (
                 "",
                 account.email,
+                _masked_credential(account.secret),
                 account.provider,
                 account.protocol.value.upper(),
                 f"{account.host}:{account.port}" if account.host else "Microsoft Graph",
@@ -71,21 +87,34 @@ class AccountTableModel(QAbstractTableModel):
             )
             return values[index.column()]
         if role == Qt.ItemDataRole.ToolTipRole:
-            if index.column() == 1:
+            if index.column() == self.EMAIL_COLUMN:
                 return "单击复制邮箱地址"
+            if index.column() == self.CREDENTIAL_COLUMN:
+                return (
+                    "单击复制完整密码/授权码（仅写入系统剪贴板）"
+                    if account.secret
+                    else "此账号未保存密码/授权码"
+                )
             return account.status_detail or STATUS_LABELS[account.status]
         if role == Qt.ItemDataRole.UserRole:
             return account.account_id
-        if role == Qt.ItemDataRole.ForegroundRole and index.column() == 7:
+        if role == Qt.ItemDataRole.ForegroundRole and index.column() == self.STATUS_COLUMN:
             return _status_color(account.status)
-        if role == Qt.ItemDataRole.FontRole and index.column() in {1, 7}:
+        if role == Qt.ItemDataRole.FontRole and index.column() in {
+            self.EMAIL_COLUMN,
+            self.STATUS_COLUMN,
+        }:
             application = QApplication.instance()
             font = QFont(application.font()) if application is not None else QFont()
-            font.setWeight(
-                QFont.Weight(max(int(font.weight()), int(QFont.Weight.DemiBold)))
-            )
+            font.setWeight(QFont.Weight(max(int(font.weight()), int(QFont.Weight.DemiBold))))
             return font
-        if role == Qt.ItemDataRole.TextAlignmentRole and index.column() in {0, 3, 6, 7}:
+        if role == Qt.ItemDataRole.TextAlignmentRole and index.column() in {
+            self.CHECK_COLUMN,
+            self.CREDENTIAL_COLUMN,
+            4,
+            7,
+            self.STATUS_COLUMN,
+        }:
             return Qt.AlignmentFlag.AlignCenter
         if role == Qt.ItemDataRole.AccessibleTextRole:
             state = "已勾选" if account.account_id in self._checked_ids else "未勾选"
@@ -106,20 +135,14 @@ class AccountTableModel(QAbstractTableModel):
         value: object,
         role: int = Qt.ItemDataRole.EditRole,
     ) -> bool:
-        if (
-            role != Qt.ItemDataRole.CheckStateRole
-            or not index.isValid()
-            or index.column() != 0
-        ):
+        if role != Qt.ItemDataRole.CheckStateRole or not index.isValid() or index.column() != 0:
             return False
         self.set_checked(index.row(), value == Qt.CheckState.Checked)
         return True
 
     def set_accounts(self, accounts: list[EmailAccount]) -> None:
         previous = set(self._checked_ids)
-        visible_ids = {
-            account.account_id for account in accounts if account.account_id is not None
-        }
+        visible_ids = {account.account_id for account in accounts if account.account_id is not None}
         self.beginResetModel()
         self._accounts = list(accounts)
         self._checked_ids.intersection_update(visible_ids)
@@ -136,9 +159,7 @@ class AccountTableModel(QAbstractTableModel):
         return list(self._accounts)
 
     def checked_accounts(self) -> list[EmailAccount]:
-        return [
-            account for account in self._accounts if account.account_id in self._checked_ids
-        ]
+        return [account for account in self._accounts if account.account_id in self._checked_ids]
 
     def is_checked(self, row: int) -> bool:
         account = self.account_at(row)
@@ -172,11 +193,7 @@ class AccountTableModel(QAbstractTableModel):
     def set_all_checked(self, checked: bool) -> None:
         previous = set(self._checked_ids)
         self._checked_ids = (
-            {
-                account.account_id
-                for account in self._accounts
-                if account.account_id is not None
-            }
+            {account.account_id for account in self._accounts if account.account_id is not None}
             if checked
             else set()
         )
@@ -250,19 +267,25 @@ class AccountTableView(QTableView):
 
     accountActivated = Signal(QModelIndex)
     emailCopyRequested = Signal(QModelIndex)
+    credentialCopyRequested = Signal(QModelIndex)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             index = self.indexAt(event.position().toPoint())
-            if index.isValid() and index.column() == 1:
-                self.emailCopyRequested.emit(index)
+            if index.isValid():
+                if index.column() == AccountTableModel.EMAIL_COLUMN:
+                    self.emailCopyRequested.emit(index)
+                elif index.column() == AccountTableModel.CREDENTIAL_COLUMN:
+                    self.credentialCopyRequested.emit(index)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         index = self.indexAt(event.position().toPoint())
         cursor = (
             Qt.CursorShape.PointingHandCursor
-            if index.isValid() and index.column() == 1
+            if index.isValid()
+            and index.column()
+            in {AccountTableModel.EMAIL_COLUMN, AccountTableModel.CREDENTIAL_COLUMN}
             else Qt.CursorShape.ArrowCursor
         )
         self.viewport().setCursor(QCursor(cursor))
@@ -298,6 +321,13 @@ class AccountTableView(QTableView):
 
 def _format_time(value: datetime | None) -> str:
     return value.astimezone().strftime("%Y-%m-%d %H:%M:%S") if value else "—"
+
+
+def _masked_credential(secret: str) -> str:
+    if not secret:
+        return "—"
+    visible = secret[: min(3, len(secret))]
+    return f"{visible}***"
 
 
 def _status_color(status: AccountStatus) -> QColor | None:

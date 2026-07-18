@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from mailbox_manager.domain.models import EmailAccount, ImportPreview
 from mailbox_manager.gui.icons import line_icon
+from mailbox_manager.gui.window_geometry import configure_resizable_window
 
 
 class ImportPreviewDialog(QDialog):
@@ -26,8 +27,11 @@ class ImportPreviewDialog(QDialog):
         self.setObjectName("importPreviewDialog")
         self._preview = preview
         self.setWindowTitle("导入映射预览")
-        self.resize(1050, 560)
-        self.setMinimumSize(820, 500)
+        configure_resizable_window(
+            self,
+            preferred=QSize(1050, 560),
+            minimum=QSize(700, 460),
+        )
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -102,9 +106,7 @@ class ImportPreviewDialog(QDialog):
                 account.provider if account else "—",
                 authentication,
                 f"{account.host}:{account.port}" if account and account.host else "—",
-                {"high": "高", "medium": "中", "low": "低"}.get(
-                    row.confidence, row.confidence
-                ),
+                {"high": "高", "medium": "中", "low": "低"}.get(row.confidence, row.confidence),
                 row.error or "；".join(row.warnings),
             )
             for column, value in enumerate(values):

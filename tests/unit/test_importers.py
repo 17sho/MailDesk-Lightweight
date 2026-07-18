@@ -40,7 +40,40 @@ def test_parser_understands_four_field_outlook_oauth_in_both_orders() -> None:
     assert first.refresh_token == "first-refresh-token-value"
     assert second.protocol is ProtocolType.GRAPH
     assert second.refresh_token == "second-refresh-token-value"
-    assert all(account.secret == "" for account in (first, second))
+    assert first.secret == "password"
+    assert second.secret == "password"
+
+
+def test_oauth_mapping_preserves_an_optional_password() -> None:
+    client_id = "00000000-0000-0000-0000-000000000001"
+    preview = SmartAccountParser().parse_records(
+        [
+            {
+                "邮箱地址": "owner@outlook.com",
+                "密码": "outlook-password",
+                "RefreshToken": "long-refresh-token-value",
+                "ClientID": client_id,
+            }
+        ]
+    )
+
+    assert preview.error_count == 0
+    account = preview.valid_accounts[0]
+    assert account.protocol is ProtocolType.GRAPH
+    assert account.secret == "outlook-password"
+
+
+def test_freeform_outlook_oauth_distinguishes_password_from_refresh_token() -> None:
+    client_id = "00000000-0000-0000-0000-000000000001"
+    preview = SmartAccountParser().parse_text(
+        f"owner@outlook.com outlook-password {client_id} "
+        "M.C515_BL2.0.U.MsaArtifacts-long-refresh-token"
+    )
+
+    assert preview.error_count == 0
+    account = preview.valid_accounts[0]
+    assert account.secret == "outlook-password"
+    assert account.refresh_token == "M.C515_BL2.0.U.MsaArtifacts-long-refresh-token"
 
 
 def test_parser_does_not_silently_treat_malformed_outlook_oauth_as_password() -> None:
@@ -137,12 +170,8 @@ def test_gmail_oauth_txt_and_google_workspace_are_not_misclassified() -> None:
 
 def test_gmail_app_password_spaces_are_normalized_in_text_and_records() -> None:
     parser = SmartAccountParser()
-    delimited = parser.parse_text(
-        "first@gmail.com----abcd efgh ijkl mnop"
-    ).valid_accounts[0]
-    freeform = parser.parse_text(
-        "second@gmail.com abcd efgh ijkl mnop"
-    ).valid_accounts[0]
+    delimited = parser.parse_text("first@gmail.com----abcd efgh ijkl mnop").valid_accounts[0]
+    freeform = parser.parse_text("second@gmail.com abcd efgh ijkl mnop").valid_accounts[0]
     mapped = parser.parse_records(
         [{"email": "third@gmail.com", "password": "abcd efgh ijkl mnop"}]
     ).valid_accounts[0]
@@ -153,23 +182,29 @@ def test_gmail_app_password_spaces_are_normalized_in_text_and_records() -> None:
 
 
 def test_txt_can_infer_pop3_and_mapping_honors_security_modes() -> None:
-    pop = SmartAccountParser().parse_text(
-        "owner@example.org----password----pop.example.org----995"
-    ).valid_accounts[0]
-    mapped = SmartAccountParser().parse_records(
-        [
-            {
-                "email": "owner@example.org",
-                "password": "password",
-                "host": "imap.example.org",
-                "port": "143",
-                "security": "plain",
-                "smtp_host": "smtp.example.org",
-                "smtp_port": "587",
-                "smtp_security": "starttls",
-            }
-        ]
-    ).valid_accounts[0]
+    pop = (
+        SmartAccountParser()
+        .parse_text("owner@example.org----password----pop.example.org----995")
+        .valid_accounts[0]
+    )
+    mapped = (
+        SmartAccountParser()
+        .parse_records(
+            [
+                {
+                    "email": "owner@example.org",
+                    "password": "password",
+                    "host": "imap.example.org",
+                    "port": "143",
+                    "security": "plain",
+                    "smtp_host": "smtp.example.org",
+                    "smtp_port": "587",
+                    "smtp_security": "starttls",
+                }
+            ]
+        )
+        .valid_accounts[0]
+    )
 
     assert pop.protocol is ProtocolType.POP3
     assert pop.port == 995
@@ -178,9 +213,7 @@ def test_txt_can_infer_pop3_and_mapping_honors_security_modes() -> None:
 
 
 def test_delimited_custom_domain_with_password_uses_discovery_candidate() -> None:
-    preview = SmartAccountParser().parse_text(
-        "owner@company.example----application-password"
-    )
+    preview = SmartAccountParser().parse_text("owner@company.example----application-password")
 
     assert preview.error_count == 0
     account = preview.valid_accounts[0]

@@ -19,6 +19,12 @@ datas.append(
         "mailbox_manager/assets",
     )
 )
+datas.append(
+    (
+        str(ROOT / "src" / "mailbox_manager" / "assets" / "guide"),
+        "mailbox_manager/assets/guide",
+    )
+)
 hiddenimports = ["win32timezone", "socks", "socksio"]
 
 analysis = Analysis(

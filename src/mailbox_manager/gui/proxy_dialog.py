@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from mailbox_manager.domain.models import ProxyConfig, ProxyType
 from mailbox_manager.gui.icons import line_icon
+from mailbox_manager.gui.window_geometry import configure_resizable_window
 
 
 class AddProxyDialog(QDialog):
@@ -34,8 +35,11 @@ class AddProxyDialog(QDialog):
         self.setWindowTitle("MailDesk · 添加代理")
         font_delta = max(0, self.font().pointSize() - 10)
         minimum_width = min(720, 560 + font_delta * 15)
-        self.setMinimumSize(minimum_width, 510)
-        self.resize(max(640, minimum_width), 560)
+        configure_resizable_window(
+            self,
+            preferred=QSize(max(640, minimum_width), 560),
+            minimum=QSize(minimum_width, 480),
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -171,8 +175,7 @@ class AddProxyDialog(QDialog):
         layout.setContentsMargins(24, 14, 24, 14)
         layout.addStretch(1)
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save
-            | QDialogButtonBox.StandardButton.Cancel
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
         save = buttons.button(QDialogButtonBox.StandardButton.Save)
         save.setText("保存代理")

@@ -48,9 +48,7 @@ def _window_with_automation_repositories(tmp_path):
 def _fill_rule(dialog: EnterpriseSettingsDialog, *, name: str = "验证码规则") -> None:
     dialog.rule_name.setText(name)
     dialog.rule_pattern.setText(r"\b\d{6}\b")
-    dialog.rule_action.setCurrentIndex(
-        dialog.rule_action.findData(PostAction.NONE.value)
-    )
+    dialog.rule_action.setCurrentIndex(dialog.rule_action.findData(PostAction.NONE.value))
 
 
 def test_new_webhook_id_is_written_to_new_rule(qtbot, tmp_path) -> None:
@@ -77,16 +75,12 @@ def test_new_webhook_id_is_written_to_new_rule(qtbot, tmp_path) -> None:
 def test_existing_webhook_selection_is_written_to_new_rule(qtbot, tmp_path) -> None:
     window, webhooks, rules = _window_with_automation_repositories(tmp_path)
     qtbot.addWidget(window)
-    first_id = webhooks.add(
-        WebhookConfig(name="第一个端点", url="https://first.example.com/mail")
-    )
+    first_id = webhooks.add(WebhookConfig(name="第一个端点", url="https://first.example.com/mail"))
     selected_id = webhooks.add(
         WebhookConfig(name="选中的端点", url="https://selected.example.com/mail")
     )
     options = [
-        (item.webhook_id, item.name)
-        for item in webhooks.list_all()
-        if item.webhook_id is not None
+        (item.webhook_id, item.name) for item in webhooks.list_all() if item.webhook_id is not None
     ]
     dialog = EnterpriseSettingsDialog(webhook_options=options)
     qtbot.addWidget(dialog)
@@ -103,9 +97,7 @@ def test_existing_webhook_selection_is_written_to_new_rule(qtbot, tmp_path) -> N
     assert stored_rules[0].webhook_id == selected_id
 
 
-def test_update_check_from_settings_stays_open_without_saving(
-    qtbot, tmp_path, monkeypatch
-) -> None:
+def test_update_check_from_settings_stays_open_without_saving(qtbot, tmp_path, monkeypatch) -> None:
     window, _webhooks, _rules = _window_with_automation_repositories(tmp_path)
     qtbot.addWidget(window)
     original_dialog = EnterpriseSettingsDialog
@@ -197,18 +189,14 @@ def test_show_settings_keeps_one_shot_credentials_out_of_plain_settings(
                 webhook_options=webhook_options,
             )
             if len(opened_with) == 1:
-                self._dialog.proxy_text.setPlainText(
-                    "127.0.0.1:18080:audit-user:audit-password"
-                )
+                self._dialog.proxy_text.setPlainText("127.0.0.1:18080:audit-user:audit-password")
                 self._dialog.webhook_name.setText("audit-hook")
                 self._dialog.webhook_url.setText("https://hooks.example.com/mail")
                 self._dialog.webhook_secret.setText("audit-webhook-secret")
                 self._dialog.webhook_hosts.setText("hooks.example.com")
                 self._dialog.rule_name.setText("audit-rule")
                 self._dialog.rule_pattern.setText(r"\b\d{6}\b")
-                self._dialog.rule_webhook.setCurrentIndex(
-                    self._dialog.rule_webhook.findData("new")
-                )
+                self._dialog.rule_webhook.setCurrentIndex(self._dialog.rule_webhook.findData("new"))
 
         def exec(self):
             return self.DialogCode.Accepted
@@ -272,9 +260,7 @@ def test_show_settings_keeps_one_shot_credentials_out_of_plain_settings(
     assert "audit-webhook-secret" not in str(encrypted_webhook_secret)
 
 
-def test_main_window_removes_legacy_one_shot_credentials_from_settings(
-    qtbot, tmp_path
-) -> None:
+def test_main_window_removes_legacy_one_shot_credentials_from_settings(qtbot, tmp_path) -> None:
     database = Database(tmp_path / "legacy-settings-secrets.db")
     database.initialize()
     cipher = CredentialCipher.from_raw_key(b"L" * 32)
@@ -374,6 +360,7 @@ def test_theme_toggle_preserves_saved_font_preferences(qtbot, tmp_path) -> None:
     settings.set(
         "ui_preferences",
         {
+            "theme": "sky_blue",
             "dark_theme": False,
             "font_family": "",
             "font_size": 12,
@@ -389,18 +376,29 @@ def test_theme_toggle_preserves_saved_font_preferences(qtbot, tmp_path) -> None:
 
     window.toggle_theme()
 
+    assert window._theme_id == "midnight"
+
+    window.toggle_theme()
+
     saved = settings.get("ui_preferences", {})
-    assert saved == {
-        "theme": "midnight",
-        "dark_theme": True,
-        "font_family": "",
-        "font_size": 12,
-        "font_weight": 500,
-    }
+    assert saved["theme"] == "sky_blue"
+    assert saved["dark_theme"] is False
+    assert saved["last_light_theme"] == "sky_blue"
+    assert saved["last_dark_theme"] == "midnight"
+    assert saved["font_size"] == 12
+    assert saved["font_weight"] == 500
     app = QApplication.instance()
     assert app is not None
     assert app.font().pointSize() == 12
     assert app.font().weight() == QFont.Weight.Medium
+
+    reopened = MainWindow(
+        AccountRepository(database, cipher),
+        MessageRepository(database),
+        settings=settings,
+    )
+    qtbot.addWidget(reopened)
+    assert reopened._theme_id == "sky_blue"
 
 
 def test_named_theme_persists_and_uses_guarded_crossfade(qtbot, tmp_path) -> None:
@@ -454,9 +452,7 @@ def test_settings_page_overwrites_a_previously_remembered_close_action(
 
     class AutoAcceptCloseSettingsDialog(original_dialog):
         def exec(self) -> QDialog.DialogCode:
-            self.close_action.setCurrentIndex(
-                self.close_action.findData("ask")
-            )
+            self.close_action.setCurrentIndex(self.close_action.findData("ask"))
             self.accept()
             return QDialog.DialogCode(self.result())
 
@@ -472,9 +468,7 @@ def test_settings_page_overwrites_a_previously_remembered_close_action(
     window._force_close = True
 
 
-def test_open_settings_uses_schedule_for_current_group(
-    qtbot, tmp_path, monkeypatch
-) -> None:
+def test_open_settings_uses_schedule_for_current_group(qtbot, tmp_path, monkeypatch) -> None:
     database = Database(tmp_path / "group-schedule-settings.db")
     database.initialize()
     cipher = CredentialCipher.from_raw_key(b"G" * 32)
@@ -482,12 +476,8 @@ def test_open_settings_uses_schedule_for_current_group(
     schedules = ScheduleRepository(database)
     first_group_id = groups.create(Group(name="项目 A"))
     selected_group_id = groups.create(Group(name="项目 B"))
-    schedules.upsert(
-        ScheduleConfig(group_id=first_group_id, interval_minutes=11, enabled=False)
-    )
-    schedules.upsert(
-        ScheduleConfig(group_id=selected_group_id, interval_minutes=37, enabled=True)
-    )
+    schedules.upsert(ScheduleConfig(group_id=first_group_id, interval_minutes=11, enabled=False))
+    schedules.upsert(ScheduleConfig(group_id=selected_group_id, interval_minutes=37, enabled=True))
     window = MainWindow(
         AccountRepository(database, cipher),
         MessageRepository(database),
@@ -557,9 +547,7 @@ def test_invalid_webhook_keeps_settings_dialog_open(qtbot, monkeypatch) -> None:
     assert dialog.result() == QDialog.DialogCode.Rejected
     assert dialog.navigation.currentRow() == 3
     assert dialog.webhook_url.text() == "http://hooks.example.com/mail"
-    assert warnings == [
-        ("Webhook 地址无效", "Webhook 必须使用包含有效主机名的 HTTPS 地址。")
-    ]
+    assert warnings == [("Webhook 地址无效", "Webhook 必须使用包含有效主机名的 HTTPS 地址。")]
 
 
 def test_invalid_rule_regex_keeps_settings_dialog_open(qtbot, monkeypatch) -> None:

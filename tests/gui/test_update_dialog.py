@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtCore import QUrl, qInstallMessageHandler
 from PySide6.QtTest import QSignalSpy
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
 
 from mailbox_manager.gui import update_dialog as update_dialog_module
 from mailbox_manager.gui.motion import SmoothProgressBar
@@ -166,6 +166,31 @@ def test_download_complete_prompts_for_restart_and_install(qtbot) -> None:
     assert dialog.primary_button.text() == "正在准备安装…"
     assert dialog.later_button.isEnabled() is False
     assert dialog.progress_status_label.text() == "正在校验安装文件"
+
+
+def test_update_dialog_recenters_on_its_software_window_when_reopened(qtbot) -> None:
+    parent = QWidget()
+    parent.setGeometry(40, 60, 720, 680)
+    qtbot.addWidget(parent)
+    parent.show()
+    dialog = UpdateDialog("0.4.8", "0.4.9", RELEASE_NOTES, parent)
+    qtbot.addWidget(dialog)
+
+    dialog.show()
+    QApplication.processEvents()
+    first_parent_center = parent.frameGeometry().center()
+    first_dialog_center = dialog.frameGeometry().center()
+
+    assert (first_dialog_center - first_parent_center).manhattanLength() <= 4
+
+    dialog.hide()
+    parent.move(60, 35)
+    dialog.show()
+    QApplication.processEvents()
+
+    assert (
+        dialog.frameGeometry().center() - parent.frameGeometry().center()
+    ).manhattanLength() <= 4
 
 
 def test_download_error_is_recoverable(qtbot) -> None:

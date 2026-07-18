@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 from PySide6.QtCore import QEvent, QObject, QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QMouseEvent
+from PySide6.QtGui import QDesktopServices, QMouseEvent, QShowEvent
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -19,6 +19,10 @@ from PySide6.QtWidgets import (
 
 from mailbox_manager.gui.icons import line_icon
 from mailbox_manager.gui.motion import SmoothProgressBar
+from mailbox_manager.gui.window_geometry import (
+    center_window_on_parent,
+    configure_resizable_window,
+)
 
 
 class UpdateDialogState(StrEnum):
@@ -67,8 +71,11 @@ class UpdateDialog(QDialog):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setModal(True)
-        self.setMinimumSize(620, 540)
-        self.resize(740, 650)
+        configure_resizable_window(
+            self,
+            preferred=QSize(740, 650),
+            minimum=QSize(560, 460),
+        )
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
@@ -90,6 +97,10 @@ class UpdateDialog(QDialog):
     @property
     def state(self) -> UpdateDialogState:
         return self._state
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        center_window_on_parent(self)
 
     def _build_header(self) -> QFrame:
         header = QFrame()
@@ -149,9 +160,7 @@ class UpdateDialog(QDialog):
         self.summary_label = QLabel()
         self.summary_label.setObjectName("updateSummary")
         self.summary_label.setWordWrap(True)
-        self.summary_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.summary_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.summary_label)
 
         separator = QFrame()
@@ -329,9 +338,7 @@ class UpdateDialog(QDialog):
         """Show a recoverable error and offer a retry action."""
 
         self._set_state(UpdateDialogState.ERROR)
-        self.progress_detail_label.setText(
-            message.strip() or "下载未能完成，请检查网络后重试。"
-        )
+        self.progress_detail_label.setText(message.strip() or "下载未能完成，请检查网络后重试。")
 
     def _set_state(self, state: UpdateDialogState) -> None:
         changed = state is not self._state
@@ -387,9 +394,7 @@ class UpdateDialog(QDialog):
             self.progress_bar.setRange(0, 100)
             self.progress_bar.setValue(100)
             self.progress_percent_label.setText("100%")
-            self.progress_detail_label.setText(
-                "确认后会再次复核官方发布状态，再重启并安全安装。"
-            )
+            self.progress_detail_label.setText("确认后会再次复核官方发布状态，再重启并安全安装。")
             self.skip_button.hide()
             self.later_button.setText("稍后重启")
             self.primary_button.setText("重启并安装")

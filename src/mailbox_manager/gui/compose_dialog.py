@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from mailbox_manager.domain.models import EmailAccount
 from mailbox_manager.gui.icons import line_icon
+from mailbox_manager.gui.window_geometry import configure_resizable_window
 from mailbox_manager.services.send_service import OutgoingAttachment, OutgoingDraft
 
 
@@ -42,8 +43,11 @@ class ComposeDialog(QDialog):
         batch = len(accounts) > 1
         self.setObjectName("composeDialog")
         self.setWindowTitle("批量发件" if batch else "写邮件")
-        self.setMinimumSize(760, 620)
-        self.resize(900, 720)
+        configure_resizable_window(
+            self,
+            preferred=QSize(900, 720),
+            minimum=QSize(680, 520),
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -61,9 +65,7 @@ class ComposeDialog(QDialog):
         recipients_layout = QVBoxLayout(recipients_card)
         recipients_layout.setContentsMargins(14, 12, 14, 13)
         recipients_layout.setSpacing(9)
-        self.to_input = self._field(
-            recipients_layout, "收件人", "多个地址用逗号或分号分隔"
-        )
+        self.to_input = self._field(recipients_layout, "收件人", "多个地址用逗号或分号分隔")
         self.cc_input = self._field(recipients_layout, "抄送", "可选")
         self.bcc_input = self._field(recipients_layout, "密送", "可选")
         self.subject_input = self._field(recipients_layout, "主题", "邮件主题")
@@ -252,9 +254,7 @@ class ComposeDialog(QDialog):
             except OSError:
                 size = 0
             total += size
-            self.attachment_list.addItem(
-                QListWidgetItem(f"{path.name}    {_format_size(size)}")
-            )
+            self.attachment_list.addItem(QListWidgetItem(f"{path.name}    {_format_size(size)}"))
         self.attachment_summary.setText(
             f"附件 {len(self._attachment_paths)} 个 · {_format_size(total)}"
         )
@@ -296,11 +296,7 @@ class ComposeDialog(QDialog):
 
 
 def _parse_recipients(value: str) -> tuple[str, ...]:
-    return tuple(
-        item.strip()
-        for item in re.split(r"[,;，；\n]+", value)
-        if item.strip()
-    )
+    return tuple(item.strip() for item in re.split(r"[,;，；\n]+", value) if item.strip())
 
 
 def _format_size(size: int) -> str:

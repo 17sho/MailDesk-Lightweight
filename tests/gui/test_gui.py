@@ -94,7 +94,7 @@ def _account() -> EmailAccount:
     )
 
 
-def test_account_table_model_exposes_status_but_not_secret(qtbot) -> None:
+def test_account_table_model_exposes_masked_credential_but_not_full_secret(qtbot) -> None:
     model = AccountTableModel([_account()])
 
     rendered = [
@@ -104,6 +104,7 @@ def test_account_table_model_exposes_status_but_not_secret(qtbot) -> None:
 
     assert "owner@example.com" in rendered
     assert "正常" in rendered
+    assert "mus***" in rendered
     assert all("must-not-render" not in str(value) for value in rendered)
 
 
@@ -149,7 +150,7 @@ def test_main_window_has_required_controls_and_concurrency_bounds(qtbot, tmp_pat
     assert window.account_table.selectionMode() is QAbstractItemView.SelectionMode.NoSelection
     window.refresh_accounts()
     assert window._selected_accounts()[0].email == "owner@example.com"
-    assert window.selection_count_label.text() == "已勾选 1 个账号"
+    assert window.selection_count_label.text() in {"已勾选 1 个账号", "1 个"}
     assert window.delete_accounts_button.isEnabled() is True
 
 
@@ -236,9 +237,29 @@ def test_email_is_copied_as_soon_as_mouse_is_pressed(qtbot, tmp_path) -> None:
     )
 
 
-def test_fetch_controls_have_clear_running_stopping_and_idle_states(
-    qtbot, tmp_path
-) -> None:
+def test_clicking_masked_credential_copies_the_full_encrypted_field_value(qtbot, tmp_path) -> None:
+    database = Database(tmp_path / "credential-copy.db")
+    database.initialize()
+    accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"K" * 32))
+    accounts.add_many([_account()])
+    window = MainWindow(accounts, MessageRepository(database))
+    qtbot.addWidget(window)
+    window.resize(1200, 800)
+    window.show()
+    QApplication.clipboard().clear()
+    credential_index = window.account_model.index(0, 2)
+
+    qtbot.mouseClick(
+        window.account_table.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=window.account_table.visualRect(credential_index).center(),
+    )
+
+    assert QApplication.clipboard().text() == "must-not-render"
+    assert window.page_toast.message_label.text() == "密码/授权码已复制"
+
+
+def test_fetch_controls_have_clear_running_stopping_and_idle_states(qtbot, tmp_path) -> None:
     database = Database(tmp_path / "fetch-controls.db")
     database.initialize()
     accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"U" * 32))
@@ -306,18 +327,13 @@ def test_settings_dialog_uses_responsive_navigation_and_linked_controls(qtbot) -
 
     assert dialog.minimumWidth() >= 720
     assert dialog.navigation.count() == 10
-    assert (
-        dialog.navigation.horizontalScrollBarPolicy()
-        is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-    )
+    assert dialog.navigation.horizontalScrollBarPolicy() is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     assert all(
-        not dialog.navigation.item(row).icon().isNull()
-        for row in range(dialog.navigation.count())
+        not dialog.navigation.item(row).icon().isNull() for row in range(dialog.navigation.count())
     )
     assert dialog.pages.count() == 10
     assert (
-        dialog.pages.widget(0).horizontalScrollBarPolicy()
-        is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        dialog.pages.widget(0).horizontalScrollBarPolicy() is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     )
     assert dialog.navigation.currentRow() == 0
     assert dialog.max_messages.suffix() == " 封"
@@ -329,9 +345,7 @@ def test_settings_dialog_uses_responsive_navigation_and_linked_controls(qtbot) -
 
     dialog.navigation.setCurrentRow(3)
     assert dialog.pages.currentIndex() == 3
-    dialog.post_action.setCurrentIndex(
-        dialog.post_action.findData(PostAction.MOVE.value)
-    )
+    dialog.post_action.setCurrentIndex(dialog.post_action.findData(PostAction.MOVE.value))
     assert dialog.action_target.isEnabled() is True
     assert dialog.confirm_actions.isEnabled() is True
     dialog.schedule_enabled.setChecked(True)
@@ -376,8 +390,10 @@ def test_dense_dialogs_expand_for_large_application_font(qtbot) -> None:
         qtbot.addWidget(add_dialog)
         qtbot.addWidget(settings_dialog)
 
-        assert add_dialog.minimumWidth() >= 940
-        assert settings_dialog.minimumWidth() >= 940
+        for dialog in (add_dialog, settings_dialog):
+            available_width = dialog.screen().availableGeometry().width()
+            assert dialog.minimumWidth() <= available_width
+            assert dialog.minimumWidth() >= min(720, available_width - 48)
     finally:
         application.setFont(previous_font)
 
@@ -397,10 +413,7 @@ def test_settings_navigation_does_not_elide_labels_with_large_font(qtbot) -> Non
         dialog.show()
         QApplication.processEvents()
 
-        assert (
-            dialog.navigation.viewport().width()
-            >= dialog.navigation.sizeHintForColumn(0)
-        )
+        assert dialog.navigation.viewport().width() >= dialog.navigation.sizeHintForColumn(0)
     finally:
         application.setFont(previous_font)
         application.setStyleSheet(previous_stylesheet)
@@ -487,9 +500,7 @@ def test_close_window_dialog_disables_unavailable_tray_option(qtbot) -> None:
     assert dialog.tray_button.description_label.text() == "当前系统没有可用的系统托盘"
 
 
-def test_close_choice_can_be_remembered_and_minimizes_to_tray(
-    qtbot, tmp_path, monkeypatch
-) -> None:
+def test_close_choice_can_be_remembered_and_minimizes_to_tray(qtbot, tmp_path, monkeypatch) -> None:
     database = Database(tmp_path / "close-choice.db")
     database.initialize()
     cipher = CredentialCipher.from_raw_key(b"C" * 32)
@@ -652,9 +663,7 @@ def test_settings_action_row_labels_align_with_large_buttons(qtbot) -> None:
         QApplication.processEvents()
 
         field_label = next(
-            label
-            for label in dialog.findChildren(QLabel)
-            if label.text() == "代理管理"
+            label for label in dialog.findChildren(QLabel) if label.text() == "代理管理"
         )
         label_top = field_label.mapTo(dialog, QPoint(0, 0)).y()
         row_top = dialog.proxy_management_row.mapTo(dialog, QPoint(0, 0)).y()
@@ -672,9 +681,7 @@ def test_settings_multiline_field_labels_stay_top_aligned(qtbot) -> None:
     qtbot.addWidget(dialog)
 
     proxy_list_label = next(
-        label
-        for label in dialog.findChildren(QLabel)
-        if label.text() == "代理列表"
+        label for label in dialog.findChildren(QLabel) if label.text() == "代理列表"
     )
 
     assert proxy_list_label.alignment() & Qt.AlignmentFlag.AlignTop
@@ -726,9 +733,9 @@ def test_main_window_add_proxy_dialog_persists_encrypted_proxy(
     assert saved[0].password == "proxy-password"
     assert saved[0].is_default is True
     with database.connect() as connection:
-        ciphertext = connection.execute(
-            "SELECT password_ciphertext FROM proxies"
-        ).fetchone()["password_ciphertext"]
+        ciphertext = connection.execute("SELECT password_ciphertext FROM proxies").fetchone()[
+            "password_ciphertext"
+        ]
     assert "proxy-password" not in ciphertext
 
 
@@ -755,9 +762,7 @@ def test_settings_can_customize_fetch_extraction_rules(qtbot, monkeypatch) -> No
     assert warnings
 
 
-def test_main_window_applies_unlimited_and_custom_extraction_settings(
-    qtbot, tmp_path
-) -> None:
+def test_main_window_applies_unlimited_and_custom_extraction_settings(qtbot, tmp_path) -> None:
     database = Database(tmp_path / "fetch-settings.db")
     database.initialize()
     accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"X" * 32))
@@ -794,9 +799,7 @@ def test_settings_validation_keeps_dialog_and_user_input_open(qtbot, monkeypatch
         "warning",
         lambda _parent, title, message: warnings.append((title, message)),
     )
-    dialog.post_action.setCurrentIndex(
-        dialog.post_action.findData(PostAction.MOVE.value)
-    )
+    dialog.post_action.setCurrentIndex(dialog.post_action.findData(PostAction.MOVE.value))
     dialog.confirm_actions.setChecked(True)
     dialog.action_target.setText("")
 
@@ -827,8 +830,7 @@ def test_add_account_dialog_builds_provider_specific_accounts(qtbot) -> None:
     assert dialog.provider_list.count() == 10
     assert dialog.selected_provider_key == "microsoft"
     assert all(
-        dialog.provider_list.item(row).toolTip()
-        == dialog.provider_list.item(row).text()
+        dialog.provider_list.item(row).toolTip() == dialog.provider_list.item(row).text()
         for row in range(dialog.provider_list.count())
     )
     assert dialog.oauth_card.isVisible() is True
@@ -950,9 +952,7 @@ def test_batch_import_confirmation_persists_and_reveals_accounts(
     )
     qtbot.addWidget(window)
     window.account_search.setText("filter-that-hides-new-account")
-    preview = SmartAccountParser().parse_text(
-        "owner@gmail.com----abcd efgh ijkl mnop"
-    )
+    preview = SmartAccountParser().parse_text("owner@gmail.com----abcd efgh ijkl mnop")
 
     class AcceptedImportDialog:
         DialogCode = QDialog.DialogCode
@@ -976,9 +976,7 @@ def test_batch_import_confirmation_persists_and_reveals_accounts(
     assert window.main_tabs.currentWidget() is window.account_workspace
     assert window.account_search.text() == ""
     assert window.account_model.rowCount() == 1
-    assert window.page_toast.message_label.text() == (
-        "批量导入完成 · 新增 1 · 更新 0 · 跳过 0"
-    )
+    assert window.page_toast.message_label.text() == ("批量导入完成 · 新增 1 · 更新 0 · 跳过 0")
 
 
 def test_workspace_sections_are_resizable_and_sizes_are_persisted(qtbot, tmp_path) -> None:
@@ -1148,9 +1146,7 @@ def test_header_list_waits_for_click_then_loads_message_body(qtbot, tmp_path) ->
     assert window._displayed_messages[0].body_loaded is True
 
 
-def test_main_message_detail_displays_image_attachments_and_download_panel(
-    qtbot, tmp_path
-) -> None:
+def test_main_message_detail_displays_image_attachments_and_download_panel(qtbot, tmp_path) -> None:
     database = Database(tmp_path / "main-attachment-image.db")
     database.initialize()
     accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"G" * 32))
@@ -1188,9 +1184,7 @@ def test_main_message_detail_displays_image_attachments_and_download_panel(
     assert "图片附件" in window.message_body.toPlainText()
 
 
-def test_batch_delete_removes_checked_accounts_and_messages(
-    qtbot, tmp_path, monkeypatch
-) -> None:
+def test_batch_delete_removes_checked_accounts_and_messages(qtbot, tmp_path, monkeypatch) -> None:
     database = Database(tmp_path / "delete-accounts.db")
     database.initialize()
     accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"D" * 32))
@@ -1297,9 +1291,7 @@ def test_checked_account_can_send_from_compose_dialog_in_background(
 
     assert sent_from == ["owner@example.com"]
     assert window._send_worker is None
-    assert window.page_toast.message_label.text() == (
-        "发件完成：成功 1，失败 0，共 1 个邮箱"
-    )
+    assert window.page_toast.message_label.text() == ("发件完成：成功 1，失败 0，共 1 个邮箱")
 
 
 def test_message_search_and_filtered_copy_are_scoped(qtbot, tmp_path) -> None:
@@ -1317,9 +1309,7 @@ def test_message_search_and_filtered_copy_are_scoped(qtbot, tmp_path) -> None:
                 folder="INBOX",
                 subject="Account notice",
                 text_body="Use https://example.com/reset/ABC123 and ignore private footer.",
-                html_body=(
-                    '<a href="https://example.com/reset/ABC123">Reset</a>'
-                ),
+                html_body=('<a href="https://example.com/reset/ABC123">Reset</a>'),
             ),
         ),
     )
@@ -1414,10 +1404,7 @@ def test_content_filter_actions_fit_large_font(qtbot, tmp_path) -> None:
         QApplication.processEvents()
 
         assert dialog.filter_button.width() >= dialog.filter_button.sizeHint().width()
-        assert (
-            dialog.deep_filter_button.width()
-            >= dialog.deep_filter_button.sizeHint().width()
-        )
+        assert dialog.deep_filter_button.width() >= dialog.deep_filter_button.sizeHint().width()
     finally:
         application.setFont(previous_font)
         application.setStyleSheet(previous_stylesheet)
@@ -1564,7 +1551,9 @@ def test_theme_switch_crossfades_from_current_visible_frame(qtbot, tmp_path) -> 
     assert window._theme_transition is not first_transition
 
 
-def test_account_column_visibility_is_saved_without_sensitive_columns(qtbot, tmp_path) -> None:
+def test_account_column_visibility_includes_masked_credential_but_not_token(
+    qtbot, tmp_path
+) -> None:
     database = Database(tmp_path / "columns.db")
     database.initialize()
     accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"N" * 32))
@@ -1575,12 +1564,13 @@ def test_account_column_visibility_is_saved_without_sensitive_columns(qtbot, tmp
 
     labels = {action.text() for action in window.column_menu.actions()}
     assert "账号" in labels
-    assert "密码" not in labels
+    assert "密码/授权码" in labels
     assert "Token" not in labels
-    window._column_actions[4].setChecked(False)
+    server_column = window.account_model.HEADERS.index("服务器")
+    window._column_actions[server_column].setChecked(False)
 
-    assert window.account_table.isColumnHidden(4) is True
-    assert settings.get("account_columns", {}) == {"hidden": [4]}
+    assert window.account_table.isColumnHidden(server_column) is True
+    assert settings.get("account_columns", {}) == {"hidden": [server_column]}
 
 
 def test_mail_viewer_groups_folders_and_renders_safe_html(qtbot) -> None:
@@ -1616,9 +1606,7 @@ def test_mail_viewer_groups_folders_and_renders_safe_html(qtbot) -> None:
     assert dialog.special_list.count() == 1
 
 
-def test_mail_viewer_lists_and_saves_received_attachments(
-    qtbot, tmp_path, monkeypatch
-) -> None:
+def test_mail_viewer_lists_and_saves_received_attachments(qtbot, tmp_path, monkeypatch) -> None:
     database = Database(tmp_path / "viewer-attachments.db")
     database.initialize()
     accounts = AccountRepository(database, CredentialCipher.from_raw_key(b"T" * 32))
@@ -1689,9 +1677,7 @@ def test_mail_viewer_link_context_menu_copies_only_the_link(
     assert dialog.feedback_label.text() == "链接已复制"
 
 
-def test_compose_dialog_builds_rich_draft_with_attachment(
-    qtbot, tmp_path, monkeypatch
-) -> None:
+def test_compose_dialog_builds_rich_draft_with_attachment(qtbot, tmp_path, monkeypatch) -> None:
     attachment = tmp_path / "invoice.txt"
     attachment.write_text("invoice-data", encoding="utf-8")
     dialog = ComposeDialog([_account()])

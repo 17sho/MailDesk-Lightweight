@@ -207,9 +207,7 @@ def _oauth_fields(parts: list[str]) -> tuple[str, str, str] | None:
     def token_score(candidate: tuple[int, str]) -> tuple[int, int, int]:
         index, value = candidate
         token_like = int(
-            len(value) >= 80
-            or value.startswith(("0.", "1.", "M."))
-            or value.count(".") >= 2
+            len(value) >= 80 or value.startswith(("0.", "1.", "M.")) or value.count(".") >= 2
         )
         adjacent_after = int(index == client_index + 1)
         adjacent_before = int(index == client_index - 1)
@@ -298,12 +296,13 @@ class SmartAccountParser:
             if token.strip(":=()[]{}<>'\"")
         ]
         tokens = [token for token in tokens if not PROXY_SEARCH.fullmatch(token)]
-        client_id = next(
-            (token for token in tokens if _oauth_provider_for_client_id(token)), ""
-        )
+        client_id = next((token for token in tokens if _oauth_provider_for_client_id(token)), "")
         if client_id:
-            refresh_token = next((token for token in tokens if token != client_id), "")
-            if not refresh_token:
+            try:
+                oauth_fields = _oauth_fields([email, *tokens])
+            except ValueError:
+                oauth_fields = None
+            if oauth_fields is None:
                 return ImportPreviewRow(
                     number,
                     None,
@@ -312,7 +311,15 @@ class SmartAccountParser:
                     error="Outlook OAuth 行缺少 Refresh Token",
                     raw_masked=_masked_source(email),
                 )
-            oauth_provider = _oauth_provider_for_client_id(client_id)
+            client_id, refresh_token, oauth_provider = oauth_fields
+            secret = next(
+                (
+                    token
+                    for token in tokens
+                    if token and token not in {client_id, refresh_token}
+                ),
+                "",
+            )
             if oauth_provider == "google":
                 gmail = provider_for_email("owner@gmail.com")
                 account = EmailAccount(
@@ -322,6 +329,7 @@ class SmartAccountParser:
                     host="imap.gmail.com",
                     port=993,
                     username=email,
+                    secret=secret,
                     refresh_token=refresh_token,
                     client_id=client_id,
                     oauth_provider="google",
@@ -334,6 +342,7 @@ class SmartAccountParser:
                     provider="Outlook",
                     protocol=ProtocolType.GRAPH,
                     username=email,
+                    secret=secret,
                     refresh_token=refresh_token,
                     client_id=client_id,
                     oauth_provider="microsoft",
@@ -397,9 +406,8 @@ class SmartAccountParser:
             tuple(warnings),
             raw_masked=_masked_source(email),
         )
-    def _account_from_parts(
-        self, parts: list[str]
-    ) -> tuple[EmailAccount, str, tuple[str, ...]]:
+
+    def _account_from_parts(self, parts: list[str]) -> tuple[EmailAccount, str, tuple[str, ...]]:
         email = parts[0].casefold()
         if len(parts) >= 4 and parts[3].isdigit():
             port = int(parts[3])
@@ -415,11 +423,7 @@ class SmartAccountParser:
                 protocol=protocol,
                 host=host,
                 port=port,
-                security=(
-                    SecurityMode.SSL
-                    if port in {993, 995}
-                    else SecurityMode.STARTTLS
-                ),
+                security=(SecurityMode.SSL if port in {993, 995} else SecurityMode.STARTTLS),
                 username=email,
                 secret=parts[1],
                 totp_secret=parts[4] if len(parts) >= 5 else "",
@@ -428,11 +432,11 @@ class SmartAccountParser:
         oauth_fields = _oauth_fields(parts)
         if oauth_fields is not None:
             client_id, refresh_token, oauth_provider = oauth_fields
-            warnings = (
-                ("已识别带密码的 OAuth 行；密码字段不会保存",)
-                if len(parts) >= 4
-                else ()
+            secret = next(
+                (value for value in parts[1:] if value and value not in {client_id, refresh_token}),
+                "",
             )
+            warnings = ("已识别并安全保存 OAuth 账号密码字段",) if secret else ()
             if oauth_provider == "google":
                 gmail = provider_for_email("owner@gmail.com")
                 return (
@@ -443,12 +447,11 @@ class SmartAccountParser:
                         host="imap.gmail.com",
                         port=993,
                         username=email,
+                        secret=secret,
                         refresh_token=refresh_token,
                         client_id=client_id,
                         oauth_provider="google",
-                        smtp_host=(
-                            gmail.smtp_host if gmail else "smtp.gmail.com"
-                        ),
+                        smtp_host=(gmail.smtp_host if gmail else "smtp.gmail.com"),
                         smtp_port=gmail.smtp_port if gmail else 465,
                     ),
                     "high",
@@ -460,6 +463,7 @@ class SmartAccountParser:
                     provider="Outlook",
                     protocol=ProtocolType.GRAPH,
                     username=email,
+                    secret=secret,
                     refresh_token=refresh_token,
                     client_id=client_id,
                     oauth_provider="microsoft",
@@ -512,9 +516,7 @@ class SmartAccountParser:
             )
         raise ValueError("无法识别该行字段")
 
-    def _account_from_mapping(
-        self, record: Mapping[str, str], email: str
-    ) -> EmailAccount:
+    def _account_from_mapping(self, record: Mapping[str, str], email: str) -> EmailAccount:
         email = email.casefold()
         if not EMAIL_PATTERN.fullmatch(email):
             raise ValueError("邮箱地址格式不正确")
@@ -524,6 +526,7 @@ class SmartAccountParser:
             missing = "Client ID" if refresh_token else "Refresh Token"
             raise ValueError(f"OAuth 行缺少 {missing}")
         if refresh_token and client_id:
+            secret = record.get("password", "")
             requested_provider = _compact_token(record.get("oauth_provider", ""))
             inferred_provider = _oauth_provider_for_client_id(client_id)
             oauth_provider = requested_provider or inferred_provider
@@ -538,6 +541,7 @@ class SmartAccountParser:
                     host="imap.gmail.com",
                     port=993,
                     username=email,
+                    secret=secret,
                     refresh_token=refresh_token,
                     client_id=client_id,
                     oauth_provider="google",
@@ -551,14 +555,13 @@ class SmartAccountParser:
                 provider="Outlook",
                 protocol=ProtocolType.GRAPH,
                 username=email,
+                secret=secret,
                 refresh_token=refresh_token,
                 client_id=client_id,
                 tenant=record.get("tenant") or "common",
                 oauth_provider="microsoft",
             )
-        provider = provider_for_email(email) or _provider_from_hint(
-            record.get("provider", "")
-        )
+        provider = provider_for_email(email) or _provider_from_hint(record.get("provider", ""))
         protocol_value = record.get("protocol", "").strip().casefold()
         host_hint = record.get("pop_host") or record.get("host", "")
         port_hint = record.get("port", "")
@@ -584,10 +587,7 @@ class SmartAccountParser:
             )
             default_port = provider.pop_port if provider else 995
         else:
-            host = (
-                record.get("host")
-                or (provider.imap_host if provider else "")
-            )
+            host = record.get("host") or (provider.imap_host if provider else "")
             default_port = provider.imap_port if provider else 993
         if not host:
             raise ValueError("自定义域名邮箱需要提供 IMAP 服务器和端口")
@@ -600,16 +600,10 @@ class SmartAccountParser:
             secret = "".join(secret.split())
         security = _security_mode(
             record.get("security", ""),
-            default=(
-                SecurityMode.SSL
-                if port in {465, 993, 995}
-                else SecurityMode.STARTTLS
-            ),
+            default=(SecurityMode.SSL if port in {465, 993, 995} else SecurityMode.STARTTLS),
         )
         smtp_host = record.get("smtp_host") or (provider.smtp_host if provider else "")
-        smtp_port = int(
-            record.get("smtp_port") or (provider.smtp_port if provider else 0)
-        )
+        smtp_port = int(record.get("smtp_port") or (provider.smtp_port if provider else 0))
         smtp_security = _security_mode(
             record.get("smtp_security", ""),
             default=(

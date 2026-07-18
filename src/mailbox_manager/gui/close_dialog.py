@@ -14,13 +14,12 @@ from PySide6.QtWidgets import (
 )
 
 from mailbox_manager.gui.icons import line_icon
+from mailbox_manager.gui.window_geometry import configure_resizable_window
 
 CLOSE_ACTION_ASK = "ask"
 CLOSE_ACTION_TRAY = "tray"
 CLOSE_ACTION_EXIT = "exit"
-CLOSE_ACTIONS = frozenset(
-    {CLOSE_ACTION_ASK, CLOSE_ACTION_TRAY, CLOSE_ACTION_EXIT}
-)
+CLOSE_ACTIONS = frozenset({CLOSE_ACTION_ASK, CLOSE_ACTION_TRAY, CLOSE_ACTION_EXIT})
 
 
 class CloseOptionButton(QPushButton):
@@ -108,7 +107,6 @@ class CloseWindowDialog(QDialog):
             | Qt.WindowType.WindowSystemMenuHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setMinimumWidth(500)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
@@ -151,9 +149,7 @@ class CloseWindowDialog(QDialog):
         self.tray_button.setEnabled(tray_available)
         if not tray_available:
             self.tray_button.setDescription("当前系统没有可用的系统托盘")
-        self.tray_button.clicked.connect(
-            lambda: self._choose(CLOSE_ACTION_TRAY)
-        )
+        self.tray_button.clicked.connect(lambda: self._choose(CLOSE_ACTION_TRAY))
         layout.addWidget(self.tray_button)
 
         self.exit_button = self._option(
@@ -163,16 +159,19 @@ class CloseWindowDialog(QDialog):
             "#ef4444",
             "closeExitOption",
         )
-        self.exit_button.clicked.connect(
-            lambda: self._choose(CLOSE_ACTION_EXIT)
-        )
+        self.exit_button.clicked.connect(lambda: self._choose(CLOSE_ACTION_EXIT))
         layout.addWidget(self.exit_button)
 
         layout.addSpacing(4)
         self.remember_checkbox = QCheckBox("记住我的选择，不再询问")
         self.remember_checkbox.setObjectName("closeRememberChoice")
         layout.addWidget(self.remember_checkbox)
-        self.resize(520, self.sizeHint().height())
+        configure_resizable_window(
+            self,
+            preferred=QSize(520, max(380, self.sizeHint().height())),
+            minimum=QSize(440, 320),
+            screen_margin=32,
+        )
 
     @staticmethod
     def _option(

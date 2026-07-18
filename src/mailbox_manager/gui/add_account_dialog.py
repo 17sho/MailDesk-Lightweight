@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from mailbox_manager.domain.models import EmailAccount, ProtocolType, SecurityMode
 from mailbox_manager.gui.icons import line_icon
+from mailbox_manager.gui.window_geometry import configure_resizable_window
 from mailbox_manager.importers.smart_parser import EMAIL_PATTERN
 from mailbox_manager.protocols.providers import PROVIDERS, ProviderConfig
 
@@ -114,11 +115,10 @@ class AddAccountDialog(QDialog):
         self.setWindowTitle("MailDesk · 添加邮箱")
         font_delta = max(0, self.font().pointSize() - 10)
         minimum_width = min(980, 760 + font_delta * 25)
-        self.setMinimumSize(minimum_width, 560)
-        available = self.screen().availableGeometry()
-        self.resize(
-            min(1040, max(minimum_width, available.width() - 100)),
-            min(720, max(560, available.height() - 100)),
+        configure_resizable_window(
+            self,
+            preferred=QSize(1040, 720),
+            minimum=QSize(minimum_width, 560),
         )
         self._account: EmailAccount | None = None
         self._current_provider_key = ""
@@ -190,9 +190,7 @@ class AddAccountDialog(QDialog):
         self.provider_list = QListWidget()
         self.provider_list.setObjectName("settingsNavigation")
         self.provider_list.setSpacing(2)
-        self.provider_list.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        self.provider_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.provider_list.setTextElideMode(Qt.TextElideMode.ElideRight)
         for option in PROVIDER_OPTIONS:
             item = QListWidgetItem(
@@ -471,9 +469,7 @@ class AddAccountDialog(QDialog):
         email = self.email.text().strip().casefold()
         if not EMAIL_PATTERN.fullmatch(email):
             raise ValueError("邮箱地址格式不正确")
-        option = next(
-            item for item in PROVIDER_OPTIONS if item.key == self.selected_provider_key
-        )
+        option = next(item for item in PROVIDER_OPTIONS if item.key == self.selected_provider_key)
         domain = email.rsplit("@", 1)[1]
         if option.allowed_domains and domain not in option.allowed_domains:
             expected = "、".join(f"@{item}" for item in option.allowed_domains)
