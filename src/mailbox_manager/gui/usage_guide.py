@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-from PySide6.QtCore import QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPaintEvent, QPixmap
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -19,8 +16,6 @@ from PySide6.QtWidgets import (
 from mailbox_manager.gui.icons import line_icon
 from mailbox_manager.gui.window_geometry import configure_resizable_window
 
-_GUIDE_ASSETS = Path(__file__).resolve().parents[1] / "assets" / "guide"
-
 
 def _label(text: str, object_name: str = "guideBody") -> QLabel:
     label = QLabel(text)
@@ -29,94 +24,6 @@ def _label(text: str, object_name: str = "guideBody") -> QLabel:
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
     return label
-
-
-class _AnnotatedScreenshot(QWidget):
-    def __init__(
-        self,
-        pixmap: QPixmap,
-        markers: tuple[tuple[float, float], ...],
-        parent=None,
-    ) -> None:
-        super().__init__(parent)
-        self._original = pixmap
-        self._markers = markers
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.setMinimumWidth(0)
-
-    def hasHeightForWidth(self) -> bool:
-        return not self._original.isNull()
-
-    def heightForWidth(self, width: int) -> int:
-        if self._original.isNull() or self._original.width() <= 0:
-            return 120
-        return max(120, round(width * self._original.height() / self._original.width()))
-
-    def sizeHint(self) -> QSize:
-        width = min(1000, max(320, self._original.width()))
-        return QSize(width, self.heightForWidth(width))
-
-    def paintEvent(self, event: QPaintEvent) -> None:
-        del event
-        if self._original.isNull():
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        target = QRectF(self.rect())
-        painter.drawPixmap(target.toRect(), self._original)
-        diameter = max(20, min(30, round(self.width() / 42)))
-        font = QFont(self.font())
-        font.setPixelSize(max(10, round(diameter * 0.45)))
-        font.setWeight(QFont.Weight.Bold)
-        painter.setFont(font)
-        for number, (x_ratio, y_ratio) in enumerate(self._markers, 1):
-            center_x = target.left() + target.width() * x_ratio
-            center_y = target.top() + target.height() * y_ratio
-            badge = QRectF(
-                center_x - diameter / 2,
-                center_y - diameter / 2,
-                diameter,
-                diameter,
-            )
-            painter.setPen(QColor("#ffffff"))
-            painter.setBrush(QColor("#2563eb"))
-            painter.drawEllipse(badge)
-            painter.setPen(QColor("#ffffff"))
-            painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, str(number))
-        painter.end()
-
-
-class GuideScreenshot(QFrame):
-    """A real MailDesk screenshot with an accessible numbered legend."""
-
-    def __init__(
-        self,
-        title: str,
-        filename: str,
-        legend: str,
-        markers: tuple[tuple[float, float], ...],
-        parent=None,
-    ) -> None:
-        super().__init__(parent)
-        self.setObjectName("settingsCard")
-        self.setAccessibleName(title)
-        self.source_path = _GUIDE_ASSETS / filename
-        self.original_pixmap = QPixmap(str(self.source_path))
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 18)
-        layout.setSpacing(10)
-        layout.addWidget(_label(title, "settingsCardTitle"))
-        if self.original_pixmap.isNull():
-            missing = _label("说明图片暂时不可用，请重新安装完整版本。")
-            missing.setAccessibleName("使用说明图片加载失败")
-            layout.addWidget(missing)
-        else:
-            image = _AnnotatedScreenshot(self.original_pixmap, markers)
-            image.setAccessibleName(f"{title}，图片中的编号与下方说明对应")
-            layout.addWidget(image)
-        self.legend_label = _label(legend, "settingsCardCaption")
-        layout.addWidget(self.legend_label)
 
 
 class UsageGuidePage(QScrollArea):
@@ -130,13 +37,14 @@ class UsageGuidePage(QScrollArea):
         page = QWidget()
         page.setObjectName("settingsPage")
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(26, 23, 26, 26)
-        layout.setSpacing(16)
+        self._page_layout = layout
+        layout.setContentsMargins(38, 32, 38, 42)
+        layout.setSpacing(22)
         layout.addWidget(_label("使用说明", "settingsPageTitle"))
         layout.addWidget(
             _label(
-                "以下图片由当前 MailDesk 界面直接截图并添加编号，"
-                "按钮位置会随系统、字体和窗口宽度自动调整。",
+                "说明按日常操作流程整理。你可以从快速开始依次阅读，也可以直接滚动到"
+                "账号、邮件、设置或常见问题部分。",
                 "settingsPageCaption",
             )
         )
@@ -148,34 +56,8 @@ class UsageGuidePage(QScrollArea):
             "3. 邮件列表会先快速显示，点击某封邮件后再加载正文、内嵌图片和附件。\n"
             "4. 首次使用请在【系统设置】确认收件上限、代理、翻译、主题与关闭行为。",
         )
-        layout.addWidget(
-            GuideScreenshot(
-                "工作台与全局操作",
-                "dashboard-annotated.png",
-                "1 工作台/账号导航　　2 添加与批量导入　　3 开始/停止取件　　"
-                "4 工具菜单与使用说明　　5 主题和系统设置",
-                ((0.09, 0.085), (0.069, 0.028), (0.119, 0.028), (0.91, 0.028), (0.962, 0.028)),
-            )
-        )
         self._add_primary_actions(layout)
-        layout.addWidget(
-            GuideScreenshot(
-                "账号与邮件管理",
-                "accounts-annotated.png",
-                "1 账号勾选框　　2 邮箱地址（单击复制）　　3 密码/授权码（遮罩显示，单击复制）　　"
-                "4 立即取件与批量发件　　5 邮件搜索、阅读器和筛选导出",
-                ((0.21, 0.34), (0.32, 0.34), (0.43, 0.34), (0.75, 0.15), (0.74, 0.71)),
-            )
-        )
         self._add_mail_actions(layout)
-        layout.addWidget(
-            GuideScreenshot(
-                "系统设置与保存",
-                "settings-annotated.png",
-                "1 设置分类　　2 当前页面选项　　3 恢复默认设置　　4 保存设置　　5 取消本次修改",
-                ((0.16, 0.22), (0.7, 0.32), (0.23, 0.96), (0.82, 0.96), (0.95, 0.96)),
-            )
-        )
         self._add_settings(layout)
         self._add_troubleshooting(layout)
         layout.addStretch(1)
@@ -186,11 +68,25 @@ class UsageGuidePage(QScrollArea):
         card = QFrame()
         card.setObjectName("settingsCard")
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(18, 16, 18, 18)
-        card_layout.setSpacing(8)
+        card_layout.setContentsMargins(24, 20, 24, 24)
+        card_layout.setSpacing(12)
         card_layout.addWidget(_label(title, "settingsCardTitle"))
-        card_layout.addWidget(_label(body))
+        spacious_body = "\n\n".join(
+            line.strip() for line in body.splitlines() if line.strip()
+        )
+        card_layout.addWidget(_label(spacious_body))
         layout.addWidget(card)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        compact = event.size().width() < 720
+        self._page_layout.setContentsMargins(
+            20 if compact else 38,
+            22 if compact else 32,
+            20 if compact else 38,
+            30 if compact else 42,
+        )
+        self._page_layout.setSpacing(18 if compact else 22)
 
     def _add_primary_actions(self, layout: QVBoxLayout) -> None:
         self._add_card(

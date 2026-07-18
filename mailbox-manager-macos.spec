@@ -19,12 +19,6 @@ datas.append(
         "mailbox_manager/assets",
     )
 )
-datas.append(
-    (
-        str(ROOT / "src" / "mailbox_manager" / "assets" / "guide"),
-        "mailbox_manager/assets/guide",
-    )
-)
 hiddenimports = ["keyring.backends.macOS", "socks", "socksio"]
 
 analysis = Analysis(

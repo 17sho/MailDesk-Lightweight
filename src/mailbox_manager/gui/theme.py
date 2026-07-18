@@ -612,6 +612,11 @@ QLabel#settingsCardTitle {
     font-size: 13px;
     font-weight: 700;
 }
+QLabel#guideBody {
+    color: #475569;
+    font-size: 12px;
+    padding: 3px 0;
+}
 QLabel#settingsFieldLabel {
     color: #475569;
     font-size: 11px;
@@ -1842,6 +1847,11 @@ QLabel#settingsCardTitle {
     color: #e5eaf2;
     font-size: 13px;
     font-weight: 700;
+}
+QLabel#guideBody {
+    color: #c4cedc;
+    font-size: 12px;
+    padding: 3px 0;
 }
 QLabel#settingsFieldLabel {
     color: #aeb9c9;

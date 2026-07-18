@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QFrame, QLabel
 
 from mailbox_manager.gui.main_window import MainWindow
 from mailbox_manager.gui.settings_dialog import EnterpriseSettingsDialog
-from mailbox_manager.gui.usage_guide import GuideScreenshot, UsageGuideDialog, UsageGuidePage
+from mailbox_manager.gui.usage_guide import UsageGuideDialog, UsageGuidePage
 from mailbox_manager.storage.crypto import CredentialCipher
 from mailbox_manager.storage.database import Database
 from mailbox_manager.storage.repositories import AccountRepository, MessageRepository
@@ -56,22 +57,37 @@ def test_usage_guide_dialog_is_resizable_and_contains_the_manual(qtbot) -> None:
     assert dialog.windowTitle() == "MailDesk · 使用说明"
     assert dialog.isSizeGripEnabled() is True
     assert "快速开始" in text
-    assert "账号与邮件" in text
+    assert "账号、搜索、阅读器与发件" in text
     assert "系统更新" in text
     assert "数据与安全" in text
 
 
-def test_usage_guide_uses_real_annotated_application_screenshots(qtbot) -> None:
+def test_usage_guide_is_text_only_with_spacious_sections(qtbot) -> None:
     page = UsageGuidePage()
     qtbot.addWidget(page)
-    screenshots = page.findChildren(GuideScreenshot)
+    sections = [
+        frame
+        for frame in page.findChildren(QFrame)
+        if frame.objectName() == "settingsCard"
+    ]
+    bodies = page.findChildren(QLabel, "guideBody")
+    margins = page.widget().layout().contentsMargins()
 
-    assert len(screenshots) == 3
-    assert all(item.accessibleName() for item in screenshots)
-    assert all(item.source_path.is_file() for item in screenshots)
-    assert all(not item.original_pixmap.isNull() for item in screenshots)
-    assert all(item.original_pixmap.width() >= 1000 for item in screenshots)
-    assert all("1" in item.legend_label.text() for item in screenshots)
+    assert len(sections) >= 7
+    assert bodies
+    assert all(label.pixmap().isNull() for label in page.findChildren(QLabel))
+    assert any("\n\n" in label.text() for label in bodies)
+    assert page.widget().layout().spacing() >= 22
+    assert margins.left() >= 38 and margins.right() >= 38
+
+
+def test_usage_guide_images_are_not_packaged() -> None:
+    root = Path(__file__).resolve().parents[2]
+
+    assert not (root / "src" / "mailbox_manager" / "assets" / "guide").exists()
+    for spec_name in ("mailbox-manager.spec", "mailbox-manager-macos.spec"):
+        spec = (root / spec_name).read_text(encoding="utf-8")
+        assert '"assets" / "guide"' not in spec
 
 
 def test_usage_guide_remains_scrollable_at_large_text_and_narrow_width(qtbot) -> None:
